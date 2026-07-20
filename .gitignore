@@ -1,0 +1,8 @@
+# OS / editor cruft
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+desktop.ini
+.DS_Store
+*~
+*.tmp
