@@ -112,18 +112,23 @@ function makeMedia(page) {
       try { if (media.ended) media.currentTime = 0; } catch (_) {}
       const p = media.play(); if (p && p.catch) p.catch(function () {});
     });
-    // When THIS page's video FULLY finishes, blink + gold-glow the forward arrow
-    // for 2s as a "turn the page" cue. Fires ONCE per page arrival (armBlink) so a
-    // short clip won't blink repeatedly. Skipped on the last page.
+    // When THIS page's video FULLY finishes: (1) blink + gold-glow the forward
+    // arrow for 2s as a "turn the page" cue — ONCE per page arrival (armBlink) so a
+    // short clip won't blink repeatedly; (2) start the 5s countdown to the page-flip
+    // tutorial nudge (so the nudge never fights the video for attention). Skipped on
+    // the last page.
     media.addEventListener("ended", function () {
       if (!opened || !ready || lbdFullscreen || flipped >= totalPages - 1) return;
       if (!leaves[flipped] || !leaves[flipped].contains(media)) return;   // only the current page
-      if (!armBlink || !cornerNext) return;      // already blinked for this visit
-      armBlink = false;                          // one blink per page arrival
-      cornerNext.classList.remove("blink1");
-      void cornerNext.offsetWidth;               // restart the animation cleanly
-      cornerNext.classList.add("blink1");
-      setTimeout(function () { cornerNext.classList.remove("blink1"); }, 2050);
+      if (armBlink && cornerNext) {              // arrow blink — one per page arrival
+        armBlink = false;
+        cornerNext.classList.remove("blink1");
+        void cornerNext.offsetWidth;             // restart the animation cleanly
+        cornerNext.classList.add("blink1");
+        setTimeout(function () { cornerNext.classList.remove("blink1"); }, 2050);
+      }
+      // Page-flip tutorial: appear 5s AFTER the video has finished playing.
+      if (typeof scheduleHintAfterVideo === "function") scheduleHintAfterVideo();
     });
   } else {
     media.decoding = "async";
@@ -1068,9 +1073,10 @@ flipHint.addEventListener("error", function () {
 }, { once: true });
 document.body.appendChild(flipHint);
 
-// Idle guidance timing: the FIRST nudge is after 5s on page 1, 10s on later pages;
-// then it plays ONCE, disappears, and comes back every 9s. Any interaction resets it.
-function idleDelay() { return flipped === 0 ? 5000 : 10000; }
+// Guidance timing: the FIRST nudge appears 5s AFTER the current page's video
+// finishes playing (so it never competes with the video). It then plays ONCE,
+// disappears, and comes back every 9s. Any interaction resets the whole cycle.
+const HINT_AFTER_VIDEO_MS = 5000;   // wait after the video ends before the first nudge
 const NUDGE_SHOW_MS = 2000;    // how long one nudge stays on screen
 const NUDGE_GAP_MS  = 9000;    // gap after it disappears before it plays again
 let idleHintTimer = null;
@@ -1151,13 +1157,23 @@ function triggerHint() {
     idleHintTimer = setTimeout(triggerHint, NUDGE_GAP_MS);   // ...then again after 9s
   }, NUDGE_SHOW_MS);
 }
+// Start (or restart) the 5s countdown to the first nudge.
+function scheduleHintAfterVideo() {
+  clearTimeout(idleHintTimer);
+  idleHintTimer = setTimeout(triggerHint, HINT_AFTER_VIDEO_MS);
+}
 function resetIdleHint() {
   hideFlipHint();
   cancelPeek();
   if (cornerNext) cornerNext.classList.remove("blink");
   clearTimeout(idleHintTimer);
   clearTimeout(nudgeHideTimer);
-  idleHintTimer = setTimeout(triggerHint, idleDelay());       // first show: 5s (pg1) / 10s (later)
+  // If the current page's video is still playing, hold off — its "ended" event
+  // will start the 5s countdown. Otherwise (no video, or it already finished),
+  // start the countdown now.
+  const v = (typeof currentVideo === "function") ? currentVideo() : null;
+  if (v && !v.ended) return;
+  scheduleHintAfterVideo();
 }
 // Any interaction cancels the nudge + restarts the idle countdown.
 ["pointerdown", "keydown", "wheel", "touchstart"].forEach(function (evt) {
