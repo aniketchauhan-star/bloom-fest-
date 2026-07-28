@@ -1254,7 +1254,7 @@ function resetToStart() {
   stopVideoWatchdog();
   Object.keys(videoWatched).forEach(function (k) { delete videoWatched[k]; });
   Object.keys(pageSeen).forEach(function (k) { delete pageSeen[k]; });
-  if (bgMusic) { try { bgMusic.pause(); bgMusic.currentTime = 0; } catch (_) {} }  // restarts on Play
+  try { bgMusic.pause(); bgMusic.currentTime = 0; } catch (_) {}   // restarts on Play
   updateProgress();                            // back on the cover → both controls gone
 }
 
@@ -1492,11 +1492,39 @@ let muted = true;
 const TITLE_VO_SRC  = "";      // e.g. "sfx/title.ogg"  — plays once on load
 const BG_MUSIC_SRC  = "";      // e.g. "sfx/bgm.ogg"    — loops quietly while reading
 
+/* A DISABLED optional track is a SILENT STUB, never null.
+   These two are read from several places — the open sequence, the tab-blur pause,
+   the tab-focus resume, Replay — and when "off" meant `null`, every one of those
+   had to remember a guard. One did not (`if (!bgMusic.paused)` in the blur handler),
+   and since that runs on `blur` / `visibilitychange` it threw the moment the reader
+   clicked away, taking the rest of the handler with it: the page's video never got
+   paused and the audio context never got suspended.
+   So instead of asking every caller to be careful, a disabled track hands back an
+   object with the same shape that quietly does nothing. Callers need no guard, and
+   a future one cannot forget it. */
+function silentTrack() {
+  return {
+    disabled: true,
+    paused: true, ended: false, currentTime: 0, volume: 1, loop: false, muted: true,
+    play: function () { return Promise.resolve(); },
+    pause: function () {}, load: function () {},
+    addEventListener: function () {}, removeEventListener: function () {}
+  };
+}
+function optionalTrack(src, setup) {
+  if (!src) return silentTrack();
+  const a = new Audio(src);
+  if (setup) setup(a);
+  return a;
+}
+
 /* ---- Title voice-over ----------------------------------------------------
    Browsers BLOCK audible autoplay before any interaction, so if the load-time
    attempt is refused we play it on the very first gesture instead. Once per load. */
-const titleVo = TITLE_VO_SRC ? new Audio(TITLE_VO_SRC) : null;
-if (titleVo) { titleVo.preload = "auto"; try { titleVo.load(); } catch (_) {} }
+const titleVo = optionalTrack(TITLE_VO_SRC, function (a) {
+  a.preload = "auto";
+  try { a.load(); } catch (_) {}
+});
 const TITLE_VO_SKIP = 0;                      // seconds to skip if the clip has leading silence
 let _titleVoPlayed = false;
 function _titleGesture() {
@@ -1506,13 +1534,15 @@ function _titleGesture() {
   playTitleVo();
 }
 function playTitleVo() {
-  if (!titleVo || _titleVoPlayed) return;
+  if (_titleVoPlayed) return;
   try { titleVo.currentTime = TITLE_VO_SKIP; } catch (_) {}
   const p = titleVo.play();
   if (p && p.then) p.then(function () { _titleVoPlayed = true; }).catch(function () {});
   else _titleVoPlayed = true;
 }
-if (titleVo) {
+// Only wire the global gesture listeners when the feature is actually ON — the stub
+// would no-op, but three capture-phase window listeners for nothing is still waste.
+if (!titleVo.disabled) {
   // Arm the first-gesture fallback IMMEDIATELY (so the very first tap fires the VO
   // with ZERO delay) AND attempt autoplay right now — whichever the browser allows
   // first wins; the other is a no-op (guarded by _titleVoPlayed).
@@ -1523,14 +1553,12 @@ if (titleVo) {
 }
 
 /* ---- Looping background music (quiet). Started on open — a user gesture. -- */
-const bgMusic = BG_MUSIC_SRC ? new Audio(BG_MUSIC_SRC) : null;
-if (bgMusic) {
-  bgMusic.loop = true;
-  bgMusic.volume = 0.20;
-  bgMusic.preload = "none";      // only fetched when it is actually started
-}
+const bgMusic = optionalTrack(BG_MUSIC_SRC, function (a) {
+  a.loop = true;
+  a.volume = 0.20;
+  a.preload = "none";            // only fetched when it is actually started
+});
 function playBgMusic() {
-  if (!bgMusic) return;
   try {
     const p = bgMusic.play();
     if (p && p.catch) p.catch(function () {});   // ignore autoplay rejections
@@ -1548,7 +1576,7 @@ function currentVideo() {
   return leaf ? leaf.querySelector("video.page-media") : null;
 }
 function pauseAllAudioFB() {
-  if (!bgMusic.paused) { _bgWasPlaying = true; try { bgMusic.pause(); } catch (_) {} }
+  if (!bgMusic.paused) { _bgWasPlaying = true; try { bgMusic.pause(); } catch (_) {} }   // a disabled track reports paused
   const v = currentVideo();
   if (v && !v.paused) { v.dataset.wasPlaying = "1"; try { v.pause(); } catch (_) {} }
   if (audioCtx && audioCtx.state === "running") { try { audioCtx.suspend(); } catch (_) {} }
