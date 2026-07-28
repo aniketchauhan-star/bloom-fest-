@@ -1,0 +1,131 @@
+@font-face {
+  font-family: 'GameFont';
+  src: url('../assets/fonts/LilitaOne-Regular.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%; height: 100%; overflow: hidden;
+  background: #1a1526;
+  font-family: 'GameFont', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+#viewport {
+  position: fixed; inset: 0;
+  width: 100vw; height: 100vh;
+  height: 100dvh;                 /* track mobile browser UI (address bar) collapse */
+  overflow: hidden;
+  background: #14101f;            /* themed letterbox bars (matches the boot screen) */
+  /* respect device safe-area insets (notches) without distorting the 16:9 stage */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+/* Fixed logical 1920x1080 stage, scaled uniformly (min ratio) and letterbox-centered by JS. */
+#stage {
+  position: absolute;
+  top: 0; left: 0;
+  width: 1920px; height: 1080px;
+  transform-origin: top left;
+  will-change: transform;
+}
+
+.node {
+  position: absolute;
+  background-repeat: no-repeat;
+  pointer-events: none;
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+.node.pressed { filter: brightness(0.92); }
+
+/* interactive cursors: a hand (pointer) on every tap target, grab/grabbing on draggables.
+ * role="button" is stamped on every onClick target; draggables carry an inline "grab" (see
+ * interaction.js) which wins over this rule while a placed item stays a plain tap target. */
+.node[role="button"] { cursor: pointer; }
+.rb-grabbing, .rb-grabbing * { cursor: grabbing !important; }
+
+/* keyboard focus ring for interactive nodes (does not affect mouse/touch) */
+.node[role="button"]:focus-visible {
+  outline: 4px solid #ffd9a0;
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.tmp { display: flex; overflow: hidden; }
+.tmp-inner { width: 100%; }
+
+.confetti-p {
+  position: fixed;
+  width: 20px; height: 20px;
+  pointer-events: none;
+  z-index: 9999;
+  will-change: transform, opacity;
+  /* 5-point star + layered warm glow so bursts read as magical golden sparkles, not paper confetti */
+  clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+  filter: drop-shadow(0 0 6px rgba(255, 214, 90, 1)) drop-shadow(0 0 14px rgba(255, 188, 40, 0.75)) brightness(1.12);
+}
+
+/* first-paint loader */
+#boot {
+  position: fixed; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: #ffd9a0; font-size: 28px; letter-spacing: 1px;
+  background: #1a1526; z-index: 5;
+  transition: opacity .4s ease;
+}
+#boot.hide { opacity: 0; pointer-events: none; }
+
+/* rotate-to-landscape prompt: only on touch devices held in portrait (the game is landscape). */
+#rotate { display: none; }
+@media (orientation: portrait) and (pointer: coarse) {
+  #rotate {
+    display: flex; position: fixed; inset: 0; z-index: 100;
+    align-items: center; justify-content: center; text-align: center;
+    padding: 6vw; background: #14101f; color: #ffd9a0;
+  }
+  #viewport { visibility: hidden; }   /* hide the (tiny) portrait game behind the prompt */
+}
+.rotate-inner { max-width: 80vw; }
+.rotate-phone { font-size: 22vw; line-height: 1; animation: rb-turn 2.2s ease-in-out infinite; }
+.rotate-inner p { margin-top: 5vw; font-size: 5.5vw; line-height: 1.5; letter-spacing: 1px; }
+@keyframes rb-turn { 0%, 35% { transform: rotate(0); } 55%, 100% { transform: rotate(-90deg); } }
+
+/* Part-4 wrong-drop "let's weigh again" hint, presented as a centered gamified CARD (not full-screen).
+ * Part 3 is scaled down + framed: rounded corners, a white inner ring, a soft blue halo and a drop
+ * shadow so it reads as a popup card floating over the dimmed scene. box-shadow (not border) avoids
+ * shifting the 1920x1080 layout; overflow clips the sky background to the rounded corners. */
+.rb-hint-card {
+  border-radius: 54px;
+  overflow: hidden;
+  transform-origin: 50% 50%;
+  z-index: 1;                     /* above the blurred backdrop */
+  box-shadow:
+    inset 0 0 0 12px #ffffff,
+    inset 0 0 0 20px rgba(120, 190, 255, 0.9),
+    0 0 0 8px rgba(140, 200, 255, 0.5),
+    0 30px 80px rgba(8, 16, 34, 0.55);
+}
+
+/* a blurred copy of the game scene behind the hint card (dimmed a touch so the sharp card pops).
+ * scaled up so the blur doesn't bleed transparent edges; dark fallback if the image fails to load. */
+.rb-hint-backdrop {
+  position: absolute; inset: 0;
+  background: #14101f center / cover no-repeat;
+  background-image: url('../assets/img/Slide_16_9_-_184.webp');
+  filter: blur(22px) brightness(0.74) saturate(1.05);
+  transform: scale(1.14);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #boot { transition: none; }
+  .confetti-p { display: none; }
+}

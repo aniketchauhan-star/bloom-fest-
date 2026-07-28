@@ -1,0 +1,16 @@
+# dependencies (sharp is only used locally to build WebP assets; not needed at runtime)
+node_modules/
+package-lock.json
+
+# local build/dev scripts
+_towebp.mjs
+
+# vercel
+.vercel/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/

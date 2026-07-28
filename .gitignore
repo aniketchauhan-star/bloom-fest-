@@ -6,3 +6,12 @@ desktop.ini
 .DS_Store
 *~
 *.tmp
+*.bak
+*.orig
+
+# Two-pass VP9 leaves these behind if an encode is interrupted
+*.pass-0.log
+*.pass-0.log.mbtree
+
+# See .vercelignore for what is excluded from the DEPLOY (notably "LBD 1/", the
+# game's authoring copy with its God Mode / QA suites — game/ is what ships).

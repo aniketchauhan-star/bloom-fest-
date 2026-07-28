@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Royal Bloom</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="boot">Loading Royal Bloom…</div>
+  <div id="viewport">
+    <div id="stage" role="application" aria-label="Royal Bloom balance-scale game"></div>
+  </div>
+
+  <!-- Landscape game: on a portrait phone/tablet the 16:9 stage would be tiny, so ask for a turn. -->
+  <div id="rotate" aria-hidden="true">
+    <div class="rotate-inner">
+      <div class="rotate-phone">📱</div>
+      <p>Please turn your device sideways<br />to play Royal Bloom</p>
+    </div>
+  </div>
+
+  <script src="js/data.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/audio-manager.js"></script>
+  <script src="js/interaction.js"></script>
+  <script src="js/controllers.js"></script>
+  <script src="js/main.js"></script>
+
+  <!-- ===== LEARNER BUILD =======================================================
+       God Mode (the dev/design suite) is deliberately ABSENT from this embedded
+       copy, along with qa/ and scripts/. Nothing in the runtime JS references it —
+       the dependency runs one way only (god-mode reads window.Engine / window.__RB,
+       never the reverse), so dropping it is safe.
+
+       ⚠ THIS COPY IS OPTIMISED; THE AUTHORING COPY IS NOT.
+       The sibling "LBD 1/" folder is where you edit. This folder differs from it in
+       three ways, and a plain re-copy would silently undo all three:
+         1. the dev suites above are stripped
+         2. js/embed-bridge.js is added (flipbook handshake + idle asset warm)
+         3. every clip is Ogg/Opus, and js/data.js points at .ogg — "LBD 1/" is
+            still .mp3
+       So after re-copying, re-run BOTH:
+            python tools/convert-media.py        (mp3 -> ogg, never larger)
+            node   tools/gen-asset-manifest.mjs  (refresh the preloader size table)
+       ========================================================================== -->
+
+  <!-- Loaded LAST so every game global (Engine, AudioManager, CONFIG, LAYOUT) is
+       already up. Talks to the flipbook shell; completely inert standalone. -->
+  <script src="js/embed-bridge.js"></script>
+
+  <script>
+    // main.js reveals the game once the first screen's art is decoded (window.__rbHideBoot).
+    // This is only a safety fallback in case the scripts fail to load.
+    setTimeout(function () {
+      (window.__rbHideBoot || function () { var b = document.getElementById('boot'); if (b) b.remove(); })();
+    }, 6000);
+  </script>
+</body>
+</html>

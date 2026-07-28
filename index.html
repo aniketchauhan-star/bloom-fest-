@@ -1,17 +1,21 @@
 <!DOCTYPE html>
 <!--
   ============================================================================
-  THE STORY NIGHT  —  interactive 3D flipbook (Neel & the dragon)
+  THE ROYAL BLOOM FEST  —  interactive 3D flipbook + embedded game
   ----------------------------------------------------------------------------
-  • No build step, no frameworks. Just open this file in any modern browser.
+  • No build step, no frameworks. Serve the folder over HTTP and open it.
   • A real 3D hardcover book: it has thickness, a spine, sits angled and casts a
-    soft shadow. Tap PLAY to open it (the cover swings on the spine), then flip.
-  • Full-bleed picture-book pages: page 1 is a video, pages 2-4 are scenes with
-    a speech bubble that pops in once you fully land on the page.
-  • Structure is split into THREE files:
+    soft shadow. Everything is preloaded behind a progress bar; the PLAY button
+    appears only once the last byte has landed, so the read never stalls.
+  • Pages are full-bleed WebM video; page 5 is the "Royal Bloom" game, embedded
+    from game/ in a body-level iframe (see the GAME OVERLAY note below).
+  • Structure:
         index.html   → this markup
-        styles.css   → all styling + the night theme + animations
-        script.js    → the flip engine + the page content (EDIT PAGES THERE)
+        styles.css   → all styling + the meadow theme + animations
+        script.js    → preloader, flip engine, and the page list (EDIT PAGES THERE)
+        sfx-data.js  → the two flip sounds, inlined so they work on file://
+  • Media formats: WebM (VP9+Opus) video, Ogg/Opus audio, WebP images. All three
+    play in Chrome, Edge, Firefox and Safari 17+.
   ============================================================================
 -->
 <html lang="en">
@@ -20,11 +24,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>The Royal Bloom Fest</title>
 
-<!-- ── Google Fonts: Fredoka (headings + speech bubbles) + Patrick Hand & Caveat ── -->
+<!-- ── Google Fonts: Fredoka only ──────────────────────────────────────────────
+     Caveat and Patrick Hand were also being requested, but after the dead
+     scrapbook-era selectors were removed neither styles a single character the
+     reader ever sees — every visible string (THE END, Replay, the rotate prompt)
+     is Fredoka. Three families down to one; only the weights actually used. ── -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link
-  href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=Fredoka:wght@500;600;700&family=Patrick+Hand&display=swap"
+  href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&display=swap"
   rel="stylesheet"
 />
 
@@ -32,7 +40,9 @@
 <link rel="stylesheet" href="styles.css" />
 </head>
 
-<body>
+<!-- is-loading is set HERE, not from JS, so the PLAY button cannot flash on screen
+     for a frame before the preloader hides it. script.js clears it at 100%. -->
+<body class="is-loading">
 <!-- Landscape lock: on phones/tablets (touch), the book shows only in landscape.
      In portrait the scene is hidden and this rotate prompt is shown instead. -->
 <div class="rotate-notice" id="rotateNotice">
@@ -90,6 +100,15 @@
                 <div class="back-fill"></div>
                 <div class="curl"></div>
                 <button class="play-btn" id="hint" type="button" aria-label="Play — open the book"></button>
+                <!-- Loading bar: sits exactly where PLAY does, and holds that spot
+                     until every byte has landed. body.is-loading hides .play-btn and
+                     shows this; the preloader in script.js swaps them at 100% and the
+                     button pops in. See PRELOADER in script.js. -->
+                <div class="loader" id="loader" role="progressbar"
+                     aria-label="Loading the story" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                  <div class="loader-track"><div class="loader-fill" id="loaderFill"></div></div>
+                  <div class="loader-pct" id="loaderPct">0%</div>
+                </div>
               </div>
               <!-- BACK of the front cover: intentionally BLANK (plain dark board). -->
               <div class="face back"></div>
@@ -116,37 +135,94 @@
   <!-- (page counter removed) -->
 </div>
 
-<!-- HOME button — top-left, shown only while reading (hidden on the cover, the
-     last page and the end). Closes the book (reverse of the opening swing) back
-     to the front cover. -->
-<button class="home-btn" id="homeBtn" type="button" aria-label="Back to the cover">
-  <svg viewBox="0 0 24 24" aria-hidden="true">
-    <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" fill="currentColor"/>
-  </svg>
-</button>
+<!-- ============================================================================
+     NAV CONTROL SET — BACK (bottom-left) · NEXT (bottom-right).
+     One control set: same box, same weight, mirrored placement (see the NAV
+     CONTROL SET block in styles.css). updateProgress() in script.js is the single
+     owner of whether each one is on screen — a dead control is HIDDEN, never
+     greyed out.
+     ============================================================================ -->
 
 <!-- Flip arrows OUTSIDE the book, fixed at the viewport's bottom corners
-     (bottom-left = back, bottom-right = forward). -->
-<button class="corner-arrow back" id="cornerPrev" aria-label="Previous page">
+     (bottom-left = back, bottom-right = forward). BACK uses the SAME svg path as
+     NEXT — CSS mirrors it with scaleX(-1). One path, two buttons. -->
+<button class="corner-arrow back" id="cornerPrev" type="button" aria-label="Previous page">
   <svg viewBox="0 0 48 48" aria-hidden="true">
     <path d="M46 19 L30 5 L30 12 C20 11 11 15 6 30 L12 33 C18 24 22 24 30 24 L30 33 Z" fill="currentColor"/>
   </svg>
 </button>
-<button class="corner-arrow fwd" id="cornerNext" aria-label="Next page">
+<button class="corner-arrow fwd" id="cornerNext" type="button" aria-label="Next page">
   <svg viewBox="0 0 48 48" aria-hidden="true">
     <path d="M46 19 L30 5 L30 12 C20 11 11 15 6 30 L12 33 C18 24 22 24 30 24 L30 33 Z" fill="currentColor"/>
   </svg>
 </button>
 
-<!-- (legacy hidden nav elements kept only so existing JS refs stay valid) -->
-<button class="arrow prev" id="prev" aria-label="Previous page">‹</button>
-<button class="arrow next" id="next" aria-label="Next page">›</button>
+<!-- ============================================================================
+     GAME OVERLAY — "Royal Bloom" (game/) embedded as a story page.
 
-<!-- (The embedded LBD game has been removed — this is a plain 2-page flipbook.) -->
+     It lives HERE, at body level, and NOT inside the book: .flip-scale carries a
+     CSS transform, and a transform makes every position:fixed descendant resolve
+     against it — so an iframe inside the book could never fill the real screen.
+     Out here it can.
+
+     It starts with NO src. script.js sets one only after this page's `load` event
+     has fired and the browser goes idle, so the game boots silently in the
+     background while the reader is still on the cover — the flipbook itself stays
+     the only thing on the critical path. Landing on the game page then just
+     reveals a game that is already running. See the LBD OVERLAY section of
+     script.js for the whole lifecycle.
+     ============================================================================ -->
+<div class="lbd-stage" id="lbdStage" aria-hidden="true">
+  <iframe id="lbdFrame"
+          title="Royal Bloom — balance-scale game"
+          allow="autoplay; fullscreen"
+          allowfullscreen
+          scrolling="no"></iframe>
+</div>
 
 <!-- Inlined one-shot SFX (base64) for glitch-free Web Audio playback on file:// -->
+<!-- Real on-disk byte sizes for every warmed file, so the bar is accurate from
+     frame one. Generated by tools/gen-asset-manifest.mjs — regenerate after any
+     media change. -->
+<script src="asset-manifest.js"></script>
 <script src="sfx-data.js"></script>
 <!-- All behaviour lives in script.js -->
 <script src="script.js"></script>
+<script>
+  /* SAFETY NET — releases the PLAY button if, and ONLY if, the preloader is not
+     actually working. body.is-loading is set in the markup, so if script.js failed
+     to parse there would otherwise be no button on the cover at all, ever.
+
+     ⚠ THIS MUST NOT BE A WALL-CLOCK TIMEOUT. A fixed deadline is indistinguishable
+     from "this connection is slow", so it fires mid-download on exactly the phones
+     the loading gate exists for — releasing PLAY at 25% and handing the reader the
+     stall we were preventing. (Measured: at 1.6 Mbit/s the honest load is ~2 min.)
+
+     So instead we watch a HEARTBEAT the preloader stamps on every repaint. Slow but
+     progressing → we stay out of the way, however long it takes. No heartbeat at all
+     → script.js never ran. Heartbeat gone stale → genuinely wedged. Only those last
+     two release the button. */
+  (function () {
+    var START_GRACE = 6000;    // time for script.js to parse and stamp its first beat
+    var STALL_GRACE = 30000;   // silence this long = wedged (a per-file stall abort is 15s)
+    function release(why) {
+      if (!document.body.classList.contains("is-loading")) return;
+      console.warn("[loader] releasing PLAY early — " + why);
+      document.body.classList.remove("is-loading");
+      var b = document.getElementById("hint");
+      if (b) b.classList.add("pop-in");
+    }
+    setTimeout(function () {
+      if (!window.__preloadHeartbeat) { release("the preloader never started"); return; }
+      var iv = setInterval(function () {
+        if (!document.body.classList.contains("is-loading")) { clearInterval(iv); return; }
+        if (Date.now() - window.__preloadHeartbeat > STALL_GRACE) {
+          clearInterval(iv);
+          release("the preloader stopped making progress");
+        }
+      }, 2000);
+    }, START_GRACE);
+  })();
+</script>
 </body>
 </html>

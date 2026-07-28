@@ -28,24 +28,12 @@ console.log("%c✅ [The Story Night] loaded — 3D flipbook · full-bleed pages 
    ----------------------------------------------------------------------------
    Every entry below is ONE page of the book, shown in order after the cover.
 
-     • type   : "video"  → a full-page video (e.g. assets/1 page.mp4)
-                "image"  → a full-page picture (e.g. assets/3 page.webp)
+     • type   : "video"  → a full-page video (e.g. assets/1.webm)
+                "image"  → a full-page picture (e.g. assets/3.webp)
      • src    : the media file for that page.
      • delay  : (video only, optional) milliseconds to wait after landing on the
                 page before the video starts (e.g. delay: 3000 → starts after 3s).
                 Omit / 0 → the video starts instantly.
-     • bubble : (optional) a speech bubble that POPS IN once the reader has
-                FULLY landed on the page. Set:
-                   kind     : "neel" (pink) or "everywhere" (glowing) — picks
-                              which bubble artwork + crop to use.
-                   text     : the words shown inside the bubble.
-                   box      : where + how big — { top/left/right/bottom, w }.
-                              positions are CSS lengths (e.g. "3%"); w is the
-                              bubble WIDTH in book-space px (book is 1280x720).
-                   flip     : true → mirror the bubble so its tail points the
-                              other way.
-                   textLeft / textTop / fontSize : fine-tune the words inside.
-
    Add / remove / reorder pages freely — the flip engine and the "Page X / N"
    counter update automatically.
    ============================================================================ */
@@ -54,20 +42,31 @@ console.log("%c✅ [The Story Night] loaded — 3D flipbook · full-bleed pages 
 // Add / remove / reorder pages freely — the flip engine and the "Page X / N"
 // counter update automatically.
 const pages = [
-  { type: "video", src: "assets/1.mp4" },   // 1 — opening video
-  { type: "video", src: "assets/2.mp4" },   // 2
-  { type: "video", src: "assets/3.mp4" },   // 3
-  { type: "video", src: "assets/4.mp4" },   // 4
-  { type: "video", src: "assets/5.mp4" },   // 5
-  { type: "end" },                          // 6 — THE END page (cream) + Replay
+  { type: "video", src: "assets/1.webm" },   // 1 — opening video
+  { type: "video", src: "assets/2.webm" },   // 2
+  { type: "video", src: "assets/3.webm" },   // 3
+  { type: "video", src: "assets/4.webm" },   // 4
+  // 5 — THE GAME (game/ — "Royal Bloom"). It is already booted and silent in a
+  //     hidden body-level iframe long before you get here, so landing on this
+  //     page is an instant reveal, never a download. The game's intro screen
+  //     shows AT PAGE SIZE, printed inside the book; tapping its "Let's Go"
+  //     expands it to true fullscreen. Finishing it folds the game away and
+  //     turns to page 6 on its own.
+  { type: "lbd",
+    src:    "game/index.html",
+    poster: "game/assets/img/Slide_16_9_-_193.webp" },
+  { type: "video", src: "assets/5.webm" },   // 6
+  { type: "end" },                          // 7 — THE END page (cream) + Replay
 ];
 
 /* ============================================================================
    ██  END OF EDITABLE CONTENT — engine below (no need to change) ██
    ============================================================================ */
 
-/* ---- Build one page face's media (image OR video OR lbd poster) ---------- */
-function makeMedia(page) {
+/* ---- Build one page face's media (image OR video OR lbd poster) ----------
+   `pageIndex` is the leaf this media belongs to — the VIDEO GATE below needs it
+   so a clip can open its OWN page's gate, whatever page is on screen. */
+function makeMedia(page, pageIndex) {
   // "lbd" pages show a STILL poster on the leaf itself (seen while the page turns);
   // the live, interactive game is a separate full-screen-capable overlay iframe
   // (see the LBD OVERLAY section below) — it can't live inside the 3D-transformed
@@ -78,8 +77,12 @@ function makeMedia(page) {
     img.draggable = false;
     img.addEventListener("dragstart", function (e) { e.preventDefault(); });
     img.decoding = "async";
-    img.src = page.poster || "";
-    img.alt = "Stairway Shuffle — tap Start to play";
+    // NO src yet — deliberately. This file lives in game/, and script.js runs during
+    // parse, so setting src here would put a game asset on the flipbook's critical
+    // path. warmLbdInBackground() fills it in after `load`, along with everything
+    // else the game needs. (It is only ever seen for the instant the page turns.)
+    img.dataset.poster = page.poster || "";
+    img.alt = "Royal Bloom — the balancing game";
     return img;
   }
   const media = page.type === "video"
@@ -94,13 +97,19 @@ function makeMedia(page) {
     media.playsInline = true;
     media.setAttribute("playsinline", "");            // iOS Safari inline playback
     media.setAttribute("webkit-playsinline", "");
-    // FIRST-FRAME POSTER: the page surface (--paper) is deep night-blue, so a video
-    // that hasn't painted a frame yet (still buffering, or autoplay was blocked) would
-    // show as a BLANK dark-blue page. The poster is that clip's own frame 0, so the
-    // scene shows INSTANTLY and — because it equals where playback starts — there's no
-    // jump when the video then plays. Posters are tiny (~40KB) and live in assets/posters/.
-    media.setAttribute("poster",
-      page.src.replace(/^assets\//, "assets/posters/").replace(/\.mp4$/i, ".webp"));
+    // FIRST-FRAME POSTER: a video that hasn't painted a frame yet (still buffering,
+    // or autoplay was blocked) would show as a blank cream page. The poster is that
+    // clip's own frame 0, so the scene shows INSTANTLY and — because it equals where
+    // playback starts — there's no jump when the video then plays.
+    // ⚠ DERIVED PATH. This is built from the video's own filename, so it moves with
+    // the media format: the extension swap below MUST match the `src` extension in
+    // the pages list, or every poster silently 404s while the code still looks fine.
+    const posterUrl = page.src.replace(/^assets\//, "assets/posters/").replace(/\.webm$/i, ".webp");
+    media.setAttribute("poster", posterUrl);
+    // Remember the on-disk URLs. The preloader swaps both to blob: URLs once the
+    // bytes are local, and the blob error-fallback needs the originals to revert to.
+    media.dataset.origSrc    = page.src;
+    media.dataset.origPoster = posterUrl;
     // LAZY: do NOT eager-buffer. With 25 videos, preload="auto" made the browser
     // open + decode every clip on load (huge memory/CPU spike + open lag). We only
     // buffer the page you're on + the next one, on demand (see warmVideo()).
@@ -112,96 +121,71 @@ function makeMedia(page) {
       try { if (media.ended) media.currentTime = 0; } catch (_) {}
       const p = media.play(); if (p && p.catch) p.catch(function () {});
     });
-    // When THIS page's video FULLY finishes: (1) blink + gold-glow the forward
-    // arrow for 2s as a "turn the page" cue — ONCE per page arrival (armBlink) so a
-    // short clip won't blink repeatedly; (2) start the 5s countdown to the page-flip
-    // tutorial nudge (so the nudge never fights the video for attention). Skipped on
-    // the last page.
+    // When THIS page's video FULLY finishes: (0) OPEN THIS PAGE'S GATE — the whole
+    // clip has been watched, so the forward arrow may now appear (see VIDEO GATE);
+    // (1) start the 5s countdown to the page-flip tutorial nudge (so the nudge never
+    // fights the video for attention). Only (0) is unconditional: the gate must open
+    // even if the reader is mid-flip or the book isn't "ready" yet, or the page would
+    // be a dead end with no way forward.
+    // The "look at me" GLOW PULSE on the forward arrow is NOT fired from here — it
+    // hangs off the arrow actually becoming visible, in setNav(). Tying it to "ended"
+    // put the cue in the wrong place on a re-visited page, where the arrow is already
+    // unlocked on arrival and the clip finishing half a minute later is not news.
     media.addEventListener("ended", function () {
+      markVideoWatched(pageIndex);
       if (!opened || !ready || lbdFullscreen || flipped >= totalPages - 1) return;
       if (!leaves[flipped] || !leaves[flipped].contains(media)) return;   // only the current page
-      if (armBlink && cornerNext) {              // arrow blink — one per page arrival
-        armBlink = false;
-        cornerNext.classList.remove("blink1");
-        void cornerNext.offsetWidth;             // restart the animation cleanly
-        cornerNext.classList.add("blink1");
-        setTimeout(function () { cornerNext.classList.remove("blink1"); }, 2050);
-      }
       // Page-flip tutorial: appear 5s AFTER the video has finished playing.
       if (typeof scheduleHintAfterVideo === "function") scheduleHintAfterVideo();
+    });
+    // A clip that can NEVER play (missing file, bad codec, decode failure) must not
+    // trap the reader on a page whose NEXT is waiting for an "ended" that will never
+    // fire — so a load/decode error opens the gate immediately.
+    // It ALSO gets one shot at recovery first: if the element is currently on a
+    // blob: URL, that blob may have been revoked or arrived truncated, and the real
+    // file is still sitting on the server. Revert to it and carry on.
+    media.addEventListener("error", function () {
+      if (revertBlob(media)) return;                  // recovered — let it try again
+      markVideoWatched(pageIndex);                    // genuinely broken → don't strand
     });
   } else {
     media.decoding = "async";
     media.alt = page.alt || "story page";
+    media.addEventListener("error", function () { revertBlob(media); });
   }
   return media;
 }
 
-/* ---- Build one speech bubble (hidden until the page fully lands) ---------
-   The bubble artwork + crop live in styles.css (.bubble.neel / .bubble.everywhere).
-   Here we only apply the per-page geometry (position, width, flip) + the text. */
-function makeBubble(bubble) {
-  const wrap = document.createElement("div");
-  wrap.className = "bubble" + (bubble.kind ? " " + bubble.kind : "");
-
-  const box = bubble.box || {};
-  ["top", "left", "right", "bottom"].forEach(function (k) {
-    if (box[k] != null) wrap.style[k] = box[k];
-  });
-  if (box.w != null) wrap.style.setProperty("--w", box.w + "px");
-
-  const bg = document.createElement("div");
-  bg.className = "bubble-bg" + (bubble.flip ? " flip" : "");
-  wrap.appendChild(bg);
-
-  if (bubble.text) {
-    const t = document.createElement("div");
-    t.className = "bubble-text";
-    t.textContent = bubble.text;
-    if (bubble.textLeft) t.style.left = bubble.textLeft;
-    if (bubble.textTop)  t.style.top  = bubble.textTop;
-    if (bubble.fontSize) t.style.fontSize = bubble.fontSize;
-    wrap.appendChild(t);
-  }
-  return wrap;
-}
-
-/* ---- Build one SVG speech bubble (white + black outline + purple glow) -----
-   cfg = { text, box:{top,left,right,bottom,w}, tail, rot, fontSize }
-     box   : position of the bubble box + its WIDTH in book-space px
-     tail  : "down" | "down-left" | "down-right"  (which way the tail points)
-     rot   : tilt in degrees (optional)
-   Hidden until the page lands (revealed by refreshMedia). */
-const SBUB_TAILS = {
-  "down":       "M42 57 L58 57 L50 73 Z",
-  "down-left":  "M30 55 L47 59 L16 73 Z",
-  "down-right": "M53 59 L70 55 L84 73 Z"
-};
-function makeSpeechBubble(cfg) {
-  const wrap = document.createElement("div");
-  wrap.className = "sbub";
-  const box = cfg.box || {};
-  ["top", "left", "right", "bottom"].forEach(function (k) {
-    if (box[k] != null) wrap.style[k] = box[k];
-  });
-  if (box.w != null) wrap.style.setProperty("--sbw", box.w + "px");
-  if (cfg.rot)       wrap.style.setProperty("--sbrot", cfg.rot + "deg");
-
-  const tailPath = SBUB_TAILS[cfg.tail] || SBUB_TAILS.down;
-  wrap.innerHTML =
-    '<svg class="sbub-svg" viewBox="0 0 100 74" aria-hidden="true">' +
-      '<g class="sbub-shape">' +
-        '<path d="' + tailPath + '"/>' +
-        '<ellipse cx="50" cy="32" rx="47" ry="29"/>' +
-      '</g>' +
-    '</svg>';
-
-  const t = document.createElement("div");
-  t.className = "sbub-text";
-  t.textContent = cfg.text || "";
-  if (cfg.fontSize) t.style.fontSize = cfg.fontSize + "px";
-  wrap.appendChild(t);
-  return wrap;
+/* ---- Blob fallback -------------------------------------------------------
+   Every media element the preloader touches ends up pointing at a blob: URL. That
+   is normally strictly better — the bytes are in the page — but a blob can be
+   revoked, or built from a truncated response, and then the element is broken
+   while the perfectly good file is still on the server. So each element gets ONE
+   revert: back to the original URL, and (for video) pick playback back up so the
+   reader doesn't just see a frozen frame.
+   Returns true if it actually reverted something, so callers can tell "recovered"
+   from "really broken". */
+function revertBlob(el) {
+  if (!el || el.dataset.blobReverted) return false;
+  const wasBlobSrc    = el.dataset.blobSrc    && el.src === el.dataset.blobSrc;
+  const wasBlobPoster = el.dataset.blobPoster && el.getAttribute("poster") === el.dataset.blobPoster;
+  if (!wasBlobSrc && !wasBlobPoster) return false;
+  el.dataset.blobReverted = "1";                      // one attempt only, never a loop
+  try {
+    if (wasBlobPoster && el.dataset.origPoster) el.setAttribute("poster", el.dataset.origPoster);
+    if (wasBlobSrc && el.dataset.origSrc) {
+      const at = el.currentTime || 0;
+      el.src = el.dataset.origSrc;
+      try { el.load(); } catch (_) {}
+      if (el.tagName === "VIDEO") {
+        el.addEventListener("loadedmetadata", function () {
+          try { if (at > 0 && at < (el.duration || Infinity)) el.currentTime = at; } catch (_) {}
+          const p = el.play(); if (p && p.catch) p.catch(function () {});
+        }, { once: true });
+      }
+    }
+  } catch (_) { return false; }
+  return true;
 }
 
 /* ---- Build the pages (one CSS 3D "leaf" per entry) ---------------------- */
@@ -240,8 +224,7 @@ pages.forEach(function (page, i) {
         '</button>' +
       '</div>';
   } else {
-    front.appendChild(makeMedia(page));                       // full-bleed image / video
-    if (page.bubble) front.appendChild(makeBubble(page.bubble));  // PNG speech bubble (revealed on land)
+    front.appendChild(makeMedia(page, i));                    // full-bleed image / video
   }
   const curl = document.createElement("div");               // moving page-curl shading
   curl.className = "curl";
@@ -263,51 +246,339 @@ const bookPop    = document.getElementById("bookPop");
 const bookFloat  = document.getElementById("bookFloat");
 const cover      = document.getElementById("cover");
 const hint       = document.getElementById("hint");
-const prevBtn    = document.getElementById("prev");
-const nextBtn    = document.getElementById("next");
 const cornerPrev  = document.getElementById("cornerPrev");
 const cornerNext  = document.getElementById("cornerNext");
 const replayBtn   = document.getElementById("replayBtn");   // lives on the THE END page (built above)
-const homeBtn     = document.getElementById("homeBtn");
 
 /* ==========================================================================
-   LBD OVERLAY  —  the Stairway Shuffle game embedded as one page.
-   The game lives in a body-level iframe (#lbdStage) so it can grow to true
-   fullscreen (a transform on .flip-scale would otherwise trap position:fixed).
-   • pre-LBD  : the overlay is sized/positioned OVER the current page rectangle,
-                so the game's home screen looks like it's printed inside the book.
-   • start    : the game posts {source:"lbd", type:"lbd-start"} → we expand the
-                overlay to fill the whole screen.
-   • end/skip : the game posts {source:"lbd", type:"lbd-complete"} → we shrink the
-                overlay back into the page and auto-flip to the next page.
+   PRELOADER  —  everything downloads behind a bar; PLAY appears only at 100%.
+   --------------------------------------------------------------------------
+   WHY. The story is ~24MB of WebM, Ogg and WebP, and the embedded game paints
+   its sprites as CSS background-image on nodes that start display:none — and a
+   hidden node's background-image is NEVER fetched. So without this, the reader
+   opened the book instantly and then hit a stall on page 1, and the game hit
+   the network again mid-play. Now the wait is honest, visible, and once.
+
+   HOW.
+     • Weights come from asset-manifest.js — REAL on-disk byte sizes generated
+       from the files themselves (tools/gen-asset-manifest.mjs), so the bar is
+       accurate from frame one instead of guessing and lurching. Each transfer
+       then refines its own weight from Content-Length.
+     • Progress is read from a STREAMING reader, so it moves with actual bytes
+       rather than jumping per-file, and it is clamped monotonic — it can never
+       go backwards when a Content-Length correction lands.
+     • SMALLEST FIRST. The manifest is emitted in ascending size order, so the
+       cover art, sprites and posters all land in the first second or two rather
+       than being starved behind a 4MB video.
+     • Media elements are swapped to blob: URLs, so "loaded" means the bytes are
+       in this page, not merely somewhere in a cache that may have evicted them.
+     • NOTHING BLOCKS. A 404, a stall, an abort, a CSP refusal, or file:// (where
+       fetch of a plain path is forbidden) all count as done and leave the element
+       on its original URL. The bar always reaches 100% and PLAY always appears.
+   ========================================================================== */
+/* The two flip sounds, named here so the preloader can hand their bytes to the
+   fallback <audio> elements further down. Ogg/Opus: Chrome, Edge, Firefox, Safari 17+. */
+const SFX_FLIP_URL  = "sfx/Page%20flip.ogg";
+const SFX_COVER_URL = "sfx/cover%20page%20flip.ogg";
+
+const PRELOAD_CONCURRENCY = 5;      // enough to fill the pipe, few enough to stay ordered
+const PRELOAD_STALL_MS    = 15000;  // no bytes for this long → abort that ONE transfer
+
+const loaderEl   = document.getElementById("loader");
+const loaderFill = document.getElementById("loaderFill");
+const loaderPct  = document.getElementById("loaderPct");
+
+let assetsReady   = false;   // has the preloader finished (however it finished)?
+let startPending  = false;   // someone tried to start the book before it was ready
+
+/* Files whose bytes belong on a specific element once local. Everything else in
+   the manifest is warmed for the HTTP cache only — which is the ONLY mechanism
+   available for the game's own assets, since it fetches those itself from inside
+   the iframe and cannot be handed a blob from out here. */
+function blobTargetsFor(url) {
+  const out = [];
+  leaves.forEach(function (leaf) {
+    const v = leaf.querySelector("video.page-media");
+    if (v && v.dataset.origSrc    === url) out.push({ el: v, prop: "src" });
+    if (v && v.dataset.origPoster === url) out.push({ el: v, prop: "poster" });
+    const im = leaf.querySelector("img.page-media");
+    if (im && im.dataset.poster === url) out.push({ el: im, prop: "src" });
+  });
+  if (url === SFX_FLIP_URL)  out.push({ el: flipSound,      prop: "src" });
+  if (url === SFX_COVER_URL) out.push({ el: coverFlipSound, prop: "src" });
+  return out;
+}
+
+/* Put a local blob on an element, remembering the original so the error path can
+   put it back (see the blob fallback in the MEDIA HARDENING section). */
+function applyBlob(target, blobUrl, origUrl) {
+  const el = target.el;
+  try {
+    if (target.prop === "poster") {
+      el.dataset.blobPoster = blobUrl;
+      el.setAttribute("poster", blobUrl);
+    } else {
+      el.dataset.blobSrc = blobUrl;
+      el.dataset.origSrc = el.dataset.origSrc || origUrl;
+      el.src = blobUrl;
+    }
+  } catch (_) {}
+}
+
+const preloadState = { total: 0, entries: [], shown: 0, done: 0 };
+
+function preloadPaint() {
+  // HEARTBEAT for the safety net in index.html. It releases the PLAY button only if
+  // this stops being stamped — never on a wall-clock deadline, so a slow connection
+  // is left to finish in its own time instead of being cut off mid-download.
+  window.__preloadHeartbeat = Date.now();
+  const t = preloadState.total || 1;
+  let got = 0;
+  for (let i = 0; i < preloadState.entries.length; i++) got += preloadState.entries[i].got;
+  const pct = Math.max(0, Math.min(100, (got / t) * 100));
+  // MONOTONIC: a Content-Length correction can shrink the denominator mid-flight,
+  // which would otherwise make the bar twitch backwards.
+  if (pct > preloadState.shown) preloadState.shown = pct;
+  const p = preloadState.shown;
+  if (loaderFill) loaderFill.style.width = p.toFixed(1) + "%";
+  if (loaderPct)  loaderPct.textContent  = Math.floor(p) + "%";
+  if (loaderEl)   loaderEl.setAttribute("aria-valuenow", String(Math.floor(p)));
+}
+
+/* Fetch ONE file with byte-accurate progress. Resolves to a Blob, or null if the
+   transfer failed in any way — the caller treats null as "done, keep the original
+   URL", so a failure costs the reader nothing but a cache miss later. */
+function preloadFetch(entry) {
+  return new Promise(function (resolve) {
+    let ctrl = null;
+    try { ctrl = new AbortController(); } catch (_) {}
+    let lastByteAt = Date.now();
+    // A per-transfer STALL timeout, not a total one: a 4MB video on a slow phone
+    // is allowed to take a minute, but a connection that has gone silent is not
+    // allowed to hold the bar hostage.
+    const stall = setInterval(function () {
+      if (Date.now() - lastByteAt > PRELOAD_STALL_MS && ctrl) { try { ctrl.abort(); } catch (_) {} }
+    }, 2000);
+    const finish = function (blob) { clearInterval(stall); resolve(blob || null); };
+
+    let req;
+    try {
+      req = fetch(entry.url, ctrl ? { signal: ctrl.signal } : undefined);
+    } catch (_) { finish(null); return; }             // file:// throws synchronously
+
+    req.then(function (res) {
+      if (!res.ok) { finish(null); return; }
+      // Refine this file's weight from the real transfer size.
+      const cl = Number(res.headers.get("content-length") || 0);
+      if (cl > 0 && cl !== entry.size) {
+        preloadState.total += cl - entry.size;
+        entry.size = cl;
+      }
+      if (!res.body || typeof res.body.getReader !== "function") {
+        // No streaming support → one lump, credited on arrival.
+        return res.blob().then(function (b) { entry.got = entry.size; preloadPaint(); finish(b); });
+      }
+      const reader = res.body.getReader();
+      const chunks = [];
+      const type = res.headers.get("content-type") || "";
+      const pump = function () {
+        return reader.read().then(function (r) {
+          if (r.done) { finish(new Blob(chunks, { type: type })); return; }
+          chunks.push(r.value);
+          lastByteAt = Date.now();
+          entry.got = Math.min(entry.size, entry.got + r.value.length);
+          preloadPaint();
+          return pump();
+        });
+      };
+      return pump();
+    }).catch(function () { finish(null); });
+  });
+}
+
+/* Reveal PLAY. Called exactly once, from whichever path finishes first. */
+function preloadFinish() {
+  if (assetsReady) return;
+  assetsReady = true;
+  preloadState.shown = 100;
+  preloadPaint();
+  // let the bar visibly reach 100 before the swap, so it never looks truncated
+  setTimeout(function () {
+    document.body.classList.remove("is-loading");
+    if (hint) {
+      hint.classList.remove("pop-in");
+      void hint.offsetWidth;
+      hint.classList.add("pop-in");
+    }
+    // Now that the pipe is free, let the game boot silently in its hidden iframe.
+    // Its assets are already in cache, so this costs nothing.
+    warmLbdInBackground();
+    // Someone hit PLAY / Enter while we were still loading — honour it now.
+    if (startPending) { startPending = false; openBook(); }
+  }, 260);
+}
+
+(function runPreloader() {
+  const table = window.ASSET_MANIFEST || {};
+  const urls = Object.keys(table);
+  if (!urls.length) { preloadFinish(); return; }      // no manifest → never block
+
+  // Ascending size. The generator already emits this order; re-sorting here means
+  // a hand-edited manifest still gets small-files-first behaviour.
+  urls.sort(function (a, b) { return table[a] - table[b]; });
+  preloadState.entries = urls.map(function (u) { return { url: u, size: table[u] || 1, got: 0 }; });
+  preloadState.total = preloadState.entries.reduce(function (s, e) { return s + e.size; }, 0);
+  preloadPaint();
+
+  let next = 0, live = 0;
+  function pump() {
+    while (live < PRELOAD_CONCURRENCY && next < preloadState.entries.length) {
+      const entry = preloadState.entries[next++];
+      live++;
+      preloadFetch(entry).then(function (blob) {
+        if (blob) {
+          const targets = blobTargetsFor(entry.url);
+          if (targets.length) {
+            const bu = URL.createObjectURL(blob);
+            targets.forEach(function (t) { applyBlob(t, bu, entry.url); });
+          }
+        }
+        entry.got = entry.size;                        // full credit either way
+        preloadState.done++;
+        preloadPaint();
+        live--;
+        if (preloadState.done >= preloadState.entries.length) preloadFinish();
+        else pump();
+      });
+    }
+  }
+  pump();
+})();
+
+/* ==========================================================================
+   LBD OVERLAY  —  the "Royal Bloom" game (game/) embedded as one page.
+   --------------------------------------------------------------------------
+   WHY AN IFRAME, AT BODY LEVEL. Two whole apps, each owning its own globals,
+   element ids and full-viewport scaling — merged into one DOM they collide, so
+   the game stays behind an iframe boundary. And that iframe is a CHILD OF <body>,
+   never of the book: .flip-scale carries a CSS transform, and a transform makes
+   every position:fixed descendant resolve against IT instead of the viewport, so
+   an iframe mounted inside the book could never reach true fullscreen.
+
+   WHY IT IS ALREADY RUNNING BEFORE YOU GET THERE. The game is ~10MB of art and
+   audio. Fetched on arrival that is a visible stall, and a miserable one on
+   mobile data. Instead:
+     • the flipbook stays the ONLY blocking resource — nothing below runs until
+       the shell has fired `load` and gone idle;
+     • then the iframe src is set and the game boots SILENTLY, hidden, while the
+       reader is still on the cover or an early page (verified safe: the game
+       plays no audio until a tap — see warmLbdInBackground);
+     • the game's own embed-bridge then trickles every level's art and audio into
+       cache during idle slices, which is the part that kills mid-play lag.
+   Landing on the page is therefore a reveal, not a download.
+
+   THE FLOW.
+     • land     : the overlay is parked exactly over the page rectangle, so the
+                  game's intro screen reads as PRINTED INTO THE BOOK.
+     • "Let's Go": the game posts {source:"lbd", type:"lbd-start"} → the overlay
+                  smoothly expands to true fullscreen and the book chrome hides.
+     • finished : the game posts {source:"lbd", type:"lbd-complete"} (after its
+                  closing voice-over) → the overlay shrinks back into the page and
+                  the book turns to the next story page on its own.
+     • leaving  : the iframe is torn down to about:blank — which is what kills the
+                  game's audio instantly — and then immediately re-pointed at the
+                  game so it re-boots silently from cache. A revisit is both
+                  INSTANT and freshly at the intro.
    ========================================================================== */
 const lbdStage = document.getElementById("lbdStage");
 const lbdFrame = document.getElementById("lbdFrame");
 let lbdFullscreen = false;   // is the overlay expanded to full screen right now?
-let lbdStarted    = false;   // has the child tapped Start at least once this visit?
+let lbdStarted    = false;   // has the reader tapped "Let's Go" this visit?
 let lbdWasOn      = false;   // was the overlay showing on the previous refresh?
-let lbdExiting    = false;   // guard so "complete" only advances once
+let lbdExiting    = false;   // guard so the exit only runs once
+let lbdReady      = false;   // has the hidden game reported its engine is up?
+let lbdRecovered  = false;   // have we already spent this visit's one boot retry?
+let lbdRecoveryTimer = null;
+let lbdExitTimer  = null;
 
-// Show the blurred pre-LBD backdrop inside the frame while the game is loading
-// (and while it's unloaded) so there is no dark flash — it matches the game's
-// own splash background, so the live home screen fades in seamlessly.
-if (lbdFrame && LBD_INDEX >= 0 && pages[LBD_INDEX].poster) {
-  lbdFrame.style.background = "#0a0f2d url('" + pages[LBD_INDEX].poster + "') center/cover no-repeat";
+/* ---- The game's intro artwork, used in two places ----------------------
+   …behind the iframe, so the overlay's first paint is already the picture the
+   reader is about to see rather than a dark flash, and on the page leaf itself,
+   which is what you glimpse while the page is mid-turn.
+   Both are set POST-LOAD, never at parse time: the file lives in game/, and one
+   game asset fetched during the flipbook's own load is still a game asset on the
+   critical path. */
+function warmLbdPoster() {
+  if (LBD_INDEX < 0) return;
+  const poster = pages[LBD_INDEX].poster;
+  if (!poster) return;
+  if (lbdFrame) lbdFrame.style.background = "#0a0f2d url('" + poster + "') center/cover no-repeat";
+  const leafImg = leaves[LBD_INDEX] && leaves[LBD_INDEX].querySelector("img.page-media");
+  if (leafImg && !leafImg.getAttribute("src")) leafImg.src = poster;
 }
-// Load the game into the iframe on demand (never on flipbook boot — it's heavy).
+
+/* ---- Idle scheduling ----------------------------------------------------
+   requestIdleCallback where it exists; Safari (and older iOS) have none, so a
+   plain timeout stands in. Either way the work lands AFTER the shell is up. */
+function onIdle(fn, timeout) {
+  if (window.requestIdleCallback) window.requestIdleCallback(fn, { timeout: timeout || 2000 });
+  else setTimeout(fn, 200);
+}
+
+/* ---- Point the iframe at the game (idempotent) ------------------------- */
 function ensureLbdLoaded() {
   if (LBD_INDEX < 0 || !lbdFrame || lbdFrame.dataset.loaded) return;
-  lbdFrame.src = pages[LBD_INDEX].src;
   lbdFrame.dataset.loaded = "1";
+  lbdFrame.src = pages[LBD_INDEX].src;
 }
-// Unload the game so the NEXT visit starts fresh at the pre-LBD home screen.
-function resetLbd() {
+
+/* ---- BACKGROUND WARM-UP -------------------------------------------------
+   ⚠ This is only safe because the game does not make a sound until it is
+   touched. Checked before wiring it up, and worth re-checking if the game is
+   ever re-authored:
+     • AudioManager.playBGM() parks the request in `pendingBgm` and refuses to
+       play until unlock(), which is bound to the first pointerdown/touch/key/click;
+     • the only playBGM() call is the "Let's Go" click callback in main.js;
+     • ButtonAnimator does nothing at boot but pulse the button — no clip;
+     • every startNarration()/playSFX() call sits inside GameManager.start(),
+       and a GameManager only starts when its level node is activated, which is
+       also downstream of that same tap.
+   If a future build DOES autoplay on load, do not warm the live iframe — prefetch
+   the asset list with fetch() instead and set src only on page-land. */
+function warmLbdInBackground() {
+  if (LBD_INDEX < 0 || !lbdFrame || lbdFrame.dataset.loaded) return;
+  onIdle(function () {
+    warmLbdPoster();     // the page thumbnail + the frame's backdrop
+    ensureLbdLoaded();   // …then boot the game itself, silently
+  }, 4000);
+}
+// Kicked off by preloadFinish() — i.e. once the loading bar is done and the pipe is
+// free — rather than on window.load, so the silent game boot never competes with the
+// bar for bandwidth. By then every game asset is already in the HTTP cache, so the
+// boot is essentially free. A late fallback covers the (guarded) case where the
+// preloader is absent entirely.
+window.addEventListener("load", function () {
+  setTimeout(function () { if (assetsReady) warmLbdInBackground(); }, 1500);
+}, { once: true });
+
+/* ---- Tear down + immediately re-warm ------------------------------------
+   about:blank is the only reliable way to stop ALL of a frame's audio at once
+   (pausing from outside would need same-origin poking at its internals, and a
+   half-torn-down game can still fire a queued clip). We then re-point it straight
+   away: everything is in HTTP cache, so the silent re-boot costs nothing and the
+   next visit is instant AND freshly at the intro. */
+function resetLbd(rewarm) {
   if (!lbdFrame) return;
   lbdStarted = false;
+  lbdReady   = false;
+  clearTimeout(lbdRecoveryTimer); lbdRecoveryTimer = null;
+  lbdRecovered = false;                    // a fresh visit gets its own retry budget
   lbdFrame.src = "about:blank";
   lbdFrame.dataset.loaded = "";
+  if (rewarm !== false) onIdle(function () { ensureLbdLoaded(); }, 3000);
 }
-// Park the overlay exactly over the on-screen page rectangle (pre-LBD look).
+
+/* ---- Park the overlay exactly over the on-screen page rectangle --------- */
 function positionLbdStage() {
   if (!lbdStage) return;
   const r = flipScaleEl.getBoundingClientRect();   // the scaled 1280×720 page area
@@ -327,72 +598,159 @@ function setLbdFullscreen(on) {
   document.body.classList.toggle("lbd-fullscreen", on);
   clearTimeout(lbdAnimTimer);
   lbdAnimTimer = setTimeout(function () { lbdStage.classList.remove("lbd-anim"); }, 460);
+  if (on) hideFlipHint();                    // the book's nudges have no business over a game
+  updateProgress();                          // book chrome follows the overlay
 }
-// Show the overlay + LOAD the game ONLY once we've fully landed on the LBD page,
-// and UNLOAD it the moment we leave. The game is never loaded on approach: it
-// autoplays its title voice-over / background music as soon as it loads, so
-// loading it early would leak "Stairway Shuffle" audio onto the previous page.
+
+/* ---- Recovery: the silent boot is the ONE thing that can fail unseen -----
+   Booting behind the reader's back means a failure is also behind their back: a
+   dropped connection on mobile data, or a frame the browser threw away to save
+   memory, and the reader lands on a blank page with no way to ask for a retry.
+   The frame reports "lbd-ready" when its engine is up, so if we land WITHOUT that
+   report, re-point the src once. Guarded twice over: never more than one retry,
+   and never once the child has actually started playing. */
+function armLbdRecovery() {
+  if (lbdReady || lbdRecovered || lbdRecoveryTimer) return;
+  lbdRecoveryTimer = setTimeout(function () {
+    lbdRecoveryTimer = null;
+    if (lbdReady || lbdRecovered || lbdStarted) return;
+    if (flipped !== LBD_INDEX) return;
+    lbdRecovered = true;
+    lbdFrame.dataset.loaded = "";          // force ensureLbdLoaded to act
+    ensureLbdLoaded();
+  }, 2500);
+}
+
+/* ---- Show / hide the overlay as pages turn ------------------------------
+   Landing is a pure reveal: the game is already booted behind the scenes, so
+   there is nothing to wait for. Leaving tears the frame down (audio stops) and
+   re-warms it. We never hide while fullscreen — that would rip a game out from
+   under a child mid-play. */
 function updateLbdOverlay() {
   if (LBD_INDEX < 0 || !lbdStage) return;
   const onLbd = opened && ready && !animating && flipped === LBD_INDEX;
   if (onLbd) {
-    ensureLbdLoaded();                    // load only now → sound starts when you REACH the page
+    /* ---- THE GAME PAGE IS GATED ON EVERY VISIT --------------------------
+       NEXT must never be on screen here: the only way forward is to finish the
+       game. Completing it calls clearGate(), and that has to be undone when the
+       reader comes BACK, or a second visit would show NEXT and let them walk
+       straight past an activity they are being asked to do. The iframe is torn
+       down and re-booted on every visit too, so the game they return to really
+       is a fresh one — the gate has to match it.
+       Re-armed on a FRESH ARRIVAL only (lbdWasOn is still false here). Doing it
+       on every refresh would slam the gate shut again in the moment between
+       exitLbd()'s clearGate() and its goNext(), and trap the reader on the page
+       they had just finished. */
+    if (!lbdWasOn) {
+      gatesCleared[LBD_INDEX] = false;
+      updateProgress();
+    }
+    ensureLbdLoaded();                    // no-op in practice: already warm
+    armLbdRecovery();                     // …unless the silent boot never landed
     if (!lbdFullscreen) positionLbdStage();
     lbdStage.classList.add("visible");
     lbdStage.setAttribute("aria-hidden", "false");
     lbdWasOn = true;
-  } else if (!lbdFullscreen) {           // never hide mid-game (we can't leave while fullscreen)
+  } else if (!lbdFullscreen) {           // never hide mid-game
     lbdStage.classList.remove("visible");
     lbdStage.setAttribute("aria-hidden", "true");
     if (lbdWasOn) {
       lbdWasOn = false;
-      resetLbd();                         // unload → stops all game audio immediately + fresh next visit
+      resetLbd();                         // audio stops at once, then silently re-boots
     }
   }
 }
-// Game finished (or the temporary Skip was tapped): come back into the page, then
-// automatically turn to the next page.
+
+/* ---- Hard reset: used by every path that leaves the book entirely --------
+   (Home / Replay / close can all fire while the game is still up — including
+   mid-fullscreen — and they bypass the page-change route above, so they call
+   THIS instead of relying on updateLbdOverlay.) */
+function teardownLbd(rewarm) {
+  if (!lbdStage) return;
+  clearTimeout(lbdExitTimer);
+  lbdExiting = false;
+  setLbdFullscreen(false);
+  lbdStage.classList.remove("visible");
+  lbdStage.setAttribute("aria-hidden", "true");
+  lbdWasOn = false;
+  resetLbd(rewarm);
+}
+
+/* ---- The game is over ---------------------------------------------------
+   The bridge has already waited out the closing voice-over, so by the time this
+   arrives the celebration has had its moment. Fold the game back into the page,
+   then turn to the next story page by itself — the reader never has to work out
+   how to get back into the book. */
 function exitLbd() {
   if (lbdExiting) return;
   lbdExiting = true;
-  setLbdFullscreen(false);                // shrink the game back into the page
-  setTimeout(function () {
+  clearGate(LBD_INDEX);                   // the game is done → this page's gate opens
+  setLbdFullscreen(false);                // shrink the game back into the page rectangle
+  lbdExitTimer = setTimeout(function () {
+    lbdStage.classList.remove("visible"); // …then fade the overlay out
+    lbdStage.setAttribute("aria-hidden", "true");
+    lbdWasOn = false;
+    resetLbd();                           // audio stops; re-boots silently for a revisit
     lbdExiting = false;
-    if (flipped === LBD_INDEX) goNext();  // auto-advance to the next story page
-  }, 470);                                // just after the shrink transition (.4s)
+    if (flipped === LBD_INDEX) goNext();  // …and read on
+  }, 430);                                // just after the shrink transition (.4s)
 }
-// Listen for the game's messages (start → fullscreen, complete → advance).
+
+/* ---- The game's side of the handshake ---------------------------------- */
 window.addEventListener("message", function (e) {
   const d = e && e.data;
   if (!d || d.source !== "lbd") return;
-  if (d.type === "lbd-start") { lbdStarted = true; setLbdFullscreen(true); }
-  else if (d.type === "lbd-complete") { exitLbd(); }
+  if (d.type === "lbd-ready") {
+    lbdReady = true;                      // hidden boot succeeded
+  } else if (d.type === "lbd-start") {
+    // "Let's Go" was tapped: grow the game out of the page to the whole screen.
+    lbdStarted = true;
+    if (!lbdFullscreen) setLbdFullscreen(true);
+  } else if (d.type === "lbd-complete") {
+    exitLbd();
+  }
 });
 
 let opened = false;      // has the cover been opened?
 let ready  = false;      // has the cover FINISHED opening? (flips allowed only then)
 let flipped = 0;         // how many leaves are currently turned to the left
 let animating = false;   // guard so a new turn can't start mid-flip
+let closing = false;     // is the cover currently swinging SHUT (Home / Replay)?
 const FLIP_MS = 1150;    // keep in sync with --flip-ms in styles.css
 const COVER_OPEN_MS = 6000;  // keep in sync with the coverOpen animation in styles.css
 const CLOSE_SETTLE_MS = 560;  // keep in sync with the bookSettle animation in styles.css
 const COVER_CLOSE_MS  = 2000; // Home/Replay: cover swings shut (reverse open); sync with coverClose in styles.css
 let _openTimer = null;   // pending "cover finished opening" timer
-let _homeTimer = null;   // pending "cover finished closing → back to the cover" timer
+let _closeTimer = null;   // pending "cover finished closing → back to the cover" timer
+let _flipTimer = null;   // pending "this page-turn has settled" timer
+let _flipLeaf  = null;   // the leaf that pending timer belongs to
+let _dragLeaf  = null;   // set while a finger-drag hands its leaf to goNext/goPrev
 
 /* ---- Responsive: scale the FIXED 1280x720 book to fit the viewport --------
-   ORIGINAL fit — 96% of width / 84% of height — so the book size and the arrows
-   (which stay at the viewport's bottom corners, via CSS) look exactly as before.
-   The ONLY addition is a safeguard on SHORT screens: never let the book grow so
-   tall that it covers the bottom controls. That safeguard changes nothing on
-   normal/large screens (there the 0.84 factor is the smaller of the two); it only
-   shrinks the book a little on small screens so the arrows + progress stay visible.
+   The book gets 88% of the width / 80% of the height, with two safeguards that
+   keep the controls clear of the artwork:
+     • HEIGHT — never let the book grow so tall that it covers the bottom controls.
+     • WIDTH  — reserve the bottom-corner buttons' own footprint, so the artwork can
+                never end up sitting underneath BACK or NEXT.
+   On a normal 16:9 screen the height factor is the smaller of the two, so the book
+   looks exactly as before; the width reserve only bites on tall/narrow viewports.
    Only this CSS transform scale changes, so the paper curl is never distorted. */
+/* CSS clamp(min, preferred, max) in JS — used to mirror the nav-button clamps. */
+function clampPx(min, preferred, max) {
+  return Math.max(min, Math.min(preferred, max));
+}
 function fitScale() {
   const CTRL = 64;                                   // min top/bottom room kept for the controls
-  const availW = window.innerWidth * 0.88;           // leave breathing space on the left + right
-  const availH = Math.min(window.innerHeight * 0.80, window.innerHeight - CTRL * 2);
-  const s = Math.min(availW / 1280, availH / 720);
+  const vw = window.innerWidth, vh = window.innerHeight;
+  // MIRROR of --nav-box / --nav-arrow-x in styles.css (NAV CONTROL SET block).
+  // If those CSS clamps change, change these in the SAME commit.
+  const btnW = clampPx(84, vw * 0.10,  124);         // --nav-box:     clamp(84px, 10vw, 124px)
+  const btnX = clampPx(12, vw * 0.025,  34);         // --nav-arrow-x: clamp(12px, 2.5vw, 34px)
+  // Reserve BOTH bottom-corner buttons' horizontal footprint (+6px of air), so
+  // the artwork can never end up sitting underneath BACK or NEXT.
+  const availW = Math.min(vw * 0.88, vw - 2 * (btnW + btnX + 6));
+  const availH = Math.min(vh * 0.80, vh - CTRL * 2);
+  const s = Math.max(0.1, Math.min(availW / 1280, availH / 720));   // never collapse to 0
   flipScaleEl.style.setProperty("--book-scale", s.toFixed(4));
   // keep the page-turn hint glued to the forward arrow when the viewport changes
   if (flipHint && flipHint.classList.contains("show")) positionFlipHint();
@@ -408,12 +766,48 @@ function updateZ() {
     leaf.style.zIndex = (i < flipped) ? (200 + i) : (100 - i);
   });
 }
+/* ---- LEAF WINDOWING  (GPU texture budget) --------------------------------
+   Every leaf is a 3D-transformed element with `will-change: transform` holding a
+   1080p <video> — i.e. several compositing layers each, all alive at once. Past
+   the GPU's texture budget the browser starts EVICTING textures, and evicted
+   content paints BLANK. It is intermittent, it depends on the machine's VRAM and
+   whatever else is on screen, and devtools looks perfectly clean while it happens,
+   which is what makes it so easy to misdiagnose.
+
+   So only the leaves that can actually be seen stay rendered. Given the stacking
+   in updateZ(), everything outside a 3-leaf window is GUARANTEED occluded:
+     • index  <  flipped - 1  → buried under the turned pile, whose top sheet is
+                                leaf (flipped - 1), an opaque full-page sheet.
+     • index  >  flipped + 1  → buried under the current page, likewise opaque.
+   The window keeps flipped-1 (the top of the turned pile, visible while a page
+   swings back) and flipped+1 (revealed underneath as the current page lifts).
+
+   The occluded ones get visibility:hidden — which actually RELEASES the layer,
+   where opacity:0 or backface-visibility would keep it resident — plus
+   will-change:auto, since a promotion hint on something that isn't being animated
+   is pure texture cost. Re-run on every navigation, from renderLeaves(). */
+const LEAF_WINDOW = 1;          // leaves kept live either side of the current page
+function windowLeaves() {
+  const lo = flipped - LEAF_WINDOW, hi = flipped + LEAF_WINDOW;
+  leaves.forEach(function (leaf, i) {
+    const live = i >= lo && i <= hi;
+    if (live) {
+      if (leaf.style.visibility) leaf.style.visibility = "";
+      leaf.style.willChange = "transform";
+    } else {
+      leaf.style.visibility = "hidden";
+      leaf.style.willChange = "auto";
+    }
+  });
+}
+
 function renderLeaves() {
   leaves.forEach(function (leaf, i) {
     if (i < flipped) leaf.classList.add("flipped");
     else             leaf.classList.remove("flipped");
   });
   updateZ();
+  windowLeaves();
 }
 
 /* ---- Per-page media -----------------------------------------------------
@@ -423,7 +817,6 @@ function renderLeaves() {
 let mediaDelayTimer = null;   // pending "start this video after N ms" timer
 let mediaDelayIdx = -1;       // which page that pending timer belongs to
 let lastMediaIdx = -1;        // last page refreshMedia handled (to arm the blink once)
-let armBlink = false;         // allow the video-end arrow blink ONCE per page arrival
 
 function playVideoNow(v) {
   try {
@@ -464,7 +857,22 @@ function primeVideo(i) {
 
 function refreshMedia() {
   const idx = flipped;                         // the front-most page right now
-  if (idx !== lastMediaIdx) { lastMediaIdx = idx; armBlink = true; }   // arm the video-end blink once per page
+  if (idx !== lastMediaIdx) {
+    lastMediaIdx = idx;
+    /* ---- ALREADY-SEEN PAGES ARE NEVER GATED AGAIN ------------------------
+       The video gate is there so a FIRST-time reader watches the whole scene
+       before moving on. It should not follow them around afterwards: turning
+       back to look at an earlier page and then forward again used to re-lock
+       NEXT, because that page's clip had been interrupted rather than finished
+       — so the reader was made to sit through a scene they'd already been
+       shown, with no way forward. On any RE-arrival we open the gate at once,
+       so both BACK and NEXT are there and they can move freely.
+       Note this deliberately covers video gates only. A page gated by
+       CONTENT — the game — is an activity, not a scene, and has to be
+       completed on each visit; see updateLbdOverlay. */
+    if (pageSeen[idx] && pageHasVideoGate(idx)) markVideoWatched(idx);
+    pageSeen[idx] = true;
+  }
   // Left the page a delayed video was counting down on? Cancel that countdown.
   if (mediaDelayTimer && mediaDelayIdx !== idx) {
     clearTimeout(mediaDelayTimer); mediaDelayTimer = null; mediaDelayIdx = -1;
@@ -498,11 +906,9 @@ function refreshMedia() {
     } else {
       playVideoNow(v);                          // no delay → instant
     }
-  }
-  const bub = cur && cur.querySelector(".bubble");
-  if (bub && !bub.dataset.revealed) {           // reveal once — "for one time"
-    bub.dataset.revealed = "1";
-    bub.classList.add("revealed");
+    armVideoWatchdog(idx, v);                   // NEXT waits on "ended" — don't let a dead clip strand us
+  } else {
+    stopVideoWatchdog();                        // not a video page → nothing to watch
   }
   updateLbdOverlay();                           // show/hide the embedded LBD game
   // Right-side page stack shrinks toward the end: 3 sheets → … → 0 on the last page.
@@ -512,7 +918,111 @@ function refreshMedia() {
   if (typeof resetIdleHint === "function") resetIdleHint();
 }
 
-/* ---- Navigation (drives the CSS leaf flip) ------------------------------ */
+/* ---- Content gate -------------------------------------------------------
+   Some pages hold the story until their content is finished (an embedded game,
+   for instance): mark such a page `gate: true` in the pages list above (an "lbd"
+   game page is gated automatically) and the forward flip stays LOCKED — NEXT is
+   hidden, and every route into goNext() refuses — until clearGate() is called for
+   it. Ungated pages (all of them right now) are never locked. */
+const gatesCleared = Object.create(null);
+function pageIsGated(i) {
+  const p = pages[i];
+  return !!p && (p.gate === true || p.type === "lbd");
+}
+function clearGate(i) { gatesCleared[i] = true; updateProgress(); }
+
+/* ---- VIDEO GATE ---------------------------------------------------------
+   A video page holds the story until its clip has FULLY played: NEXT is HIDDEN
+   while the video runs and appears — with the gold blink cue — the moment it
+   ends, so the reader watches the whole scene, then taps to turn the page.
+   Watched-once is remembered PER PAGE, so flipping BACK to a page you already
+   finished shows NEXT straight away instead of making you sit through it again.
+   Image pages and THE END are never video-gated.
+   ESCAPE HATCHES (a page with no way forward is worse than an unwatched clip):
+   the gate also opens on a media error, and on the stall watchdog below. */
+const videoWatched = Object.create(null);
+// Which pages the reader has already landed on at least once. Used by refreshMedia
+// to stop re-gating a scene they have already been shown.
+const pageSeen = Object.create(null);
+function pageHasVideoGate(i) {
+  const p = pages[i];
+  return !!p && p.type === "video";
+}
+function markVideoWatched(i) {
+  if (videoWatched[i]) return;
+  videoWatched[i] = true;
+  updateProgress();                                     // → NEXT appears on this page
+}
+function isNextLocked() {
+  if (lbdFullscreen) return true;                       // a fullscreen game owns the screen
+  if (pageIsGated(flipped) && !gatesCleared[flipped]) return true;
+  return pageHasVideoGate(flipped) && !videoWatched[flipped];   // clip must finish first
+}
+
+/* STALL WATCHDOG — the gate waits on "ended", so a clip that silently never
+   progresses (autoplay blocked and never started, a network stall, a frozen
+   decoder) would strand the reader. Poll the current page's playhead: if it has
+   not advanced for WATCHDOG_STRIKES consecutive checks, open the gate. Ticks are
+   skipped while the video is legitimately not running — during its own start
+   `delay`, and while the tab is hidden (we pause videos there on purpose). */
+const WATCHDOG_MS      = 4000;
+const WATCHDOG_STRIKES = 4;      // → ~16s of zero progress before we let the reader through
+const WATCHDOG_GRACE_MS = 6000;  // slack on top of the clip's own duration
+const WATCHDOG_MAX_MS   = 90000; // ceiling for a clip whose duration never resolves
+let _watchdogTimer = null;
+let _durationTimer = null;
+function stopVideoWatchdog() {
+  if (_watchdogTimer) { clearInterval(_watchdogTimer); _watchdogTimer = null; }
+  if (_durationTimer) { clearTimeout(_durationTimer);  _durationTimer = null; }
+}
+
+/* THREE independent ways this page's NEXT can appear, because a control that only
+   ever unlocks on one media event is a control that can strand a reader:
+     1. the "ended" event                    — the normal path (see makeMedia)
+     2. the "error" event                    — a clip that cannot play at all (ditto)
+     3. these two watchdogs                  — a clip that neither ends nor errors
+   Both watchdogs are re-armed per page arrival, from refreshMedia(). */
+function armVideoWatchdog(idx, v) {
+  stopVideoWatchdog();
+  if (!v || !pageHasVideoGate(idx) || videoWatched[idx]) return;
+
+  // (3a) DURATION watchdog — the clip's own length plus grace. Catches the case the
+  // stall poller cannot see: playback that runs to the end but never fires "ended".
+  // The clip is local (blob) by now, so duration is usually known immediately; if
+  // metadata has not arrived yet we wait for it, and fall back to a hard ceiling.
+  const armByDuration = function () {
+    if (_durationTimer) clearTimeout(_durationTimer);
+    const d = (isFinite(v.duration) && v.duration > 0) ? v.duration * 1000 : 0;
+    const delay = d ? Math.min(d + WATCHDOG_GRACE_MS, WATCHDOG_MAX_MS)
+                    : WATCHDOG_MAX_MS;
+    const startDelay = (pages[idx] && pages[idx].delay) ? pages[idx].delay : 0;
+    _durationTimer = setTimeout(function () {
+      if (flipped === idx && !videoWatched[idx]) markVideoWatched(idx);
+    }, delay + startDelay);
+  };
+  armByDuration();
+  if (!(isFinite(v.duration) && v.duration > 0)) {
+    v.addEventListener("loadedmetadata", armByDuration, { once: true });
+  }
+
+  // (3b) STALL watchdog — poll the playhead; if it has not advanced for
+  // WATCHDOG_STRIKES consecutive checks, let the reader through. Ticks are skipped
+  // while the video is legitimately not running: during its own start `delay`, and
+  // while the tab is hidden (we pause videos there on purpose).
+  let lastTime = -1, strikes = 0;
+  _watchdogTimer = setInterval(function () {
+    if (flipped !== idx || videoWatched[idx]) { stopVideoWatchdog(); return; }
+    if (document.hidden) return;                                  // paused by us, not stuck
+    if (mediaDelayTimer && mediaDelayIdx === idx) return;         // still in its start delay
+    if (v.currentTime > lastTime + 0.05) { lastTime = v.currentTime; strikes = 0; return; }
+    if (++strikes >= WATCHDOG_STRIKES) { stopVideoWatchdog(); markVideoWatched(idx); }
+  }, WATCHDOG_MS);
+}
+
+/* ---- Navigation (drives the CSS leaf flip) ------------------------------
+   goNext / goPrev are the ONLY page-turn entry points: the buttons, the keyboard,
+   the swipe/drag and every programmatic call route through them, so they all
+   inherit the same guards. No duplicate flip logic anywhere. */
 function turnLeaf(leaf) {                 // shared flip visuals + timing
   leaf.style.zIndex = 300;               // lift the turning sheet above everything
   leaf.classList.add("flipping");        // enables the moving curl shading
@@ -521,42 +1031,130 @@ function turnLeaf(leaf) {                 // shared flip visuals + timing
                                           // (as the page is revealed, not after the flip)
   playFlip();
   updateProgress();
-  setTimeout(function () {
-    leaf.classList.remove("flipping");
-    animating = false; updateZ(); updateProgress();
+  if (_dragLeaf === leaf) {
+    // This turn began as a finger-drag, so the leaf is already part-way round under
+    // an inline transform: animate THAT from the live dragged angle to the leaf's
+    // resting angle — the same angle the .flipped class holds underneath, so
+    // dropping it once settled can't make the page swing back.
+    leaf.style.transition = "";          // restore the CSS flip transition
+    void leaf.offsetWidth;               // reflow → it animates FROM the dragged angle
+    leaf.style.transform = leaf.classList.contains("flipped") ? "rotateY(-180deg)" : "rotateY(0deg)";
+  }
+  scheduleSettle(leaf);
+}
+/* Arm the "this page-turn has finished" timer for `leaf`. */
+function scheduleSettle(leaf) {
+  _flipLeaf = leaf;
+  clearTimeout(_flipTimer);
+  _flipTimer = setTimeout(function () {
+    settleFlip();
+    updateProgress();
     refreshMedia();                      // re-assert once settled (idempotent safety net)
   }, FLIP_MS + 40);
 }
+/* Land the page-turn in flight: drop the curl shading and any inline drag transform
+   WITHOUT re-animating (the .flipped class already holds the same final angle, so
+   the leaf can't briefly swing back — the old "page reappears on the left" glitch),
+   then clear the animating guard. Called by the settle timer and — synchronously —
+   by the book-close path, which can fire mid-turn: without this the stale timer
+   would run refreshMedia() after we are back on the cover, restarting a video
+   there. */
+function settleFlip() {
+  clearTimeout(_flipTimer);
+  const L = _flipLeaf;
+  _flipTimer = null; _flipLeaf = null;
+  if (L) {
+    L.classList.remove("flipping");
+    L.style.transition = "none";
+    L.style.transform = "";
+    void L.offsetWidth;                  // commit with NO transition
+    L.style.transition = "";             // restore it for the next turn
+    const c = L.querySelector(".curl"); if (c) c.style.opacity = "";
+  }
+  animating = false;
+  renderLeaves();                        // resting .flipped state + z-index
+}
+/* The one source of truth for "may the story turn this way right now?" — the
+   buttons, the keyboard and the swipe/drag all ask THESE, so a guard is never
+   duplicated or forgotten in one of the paths. */
+function canTurn() {
+  return opened &&        // the cover has been opened…
+         ready &&         // …and has FINISHED opening
+         !animating &&    // no page-turn already in flight
+         !closing &&      // not on the way back to the cover
+         !lbdFullscreen;  // no fullscreen overlay up
+}
+function canTurnNext() {
+  return canTurn() &&
+         !isNextLocked() &&              // this page's content gate must be open
+         flipped < totalPages - 1;       // and we must not be on the LAST page (THE END)
+}
+function canTurnPrev() {
+  return canTurn() && flipped > 0;       // and we must not be on the first page / the cover
+}
 function goNext() {
-  if (!opened || !ready || animating) return;   // wait until the cover has fully opened
-  if (flipped >= totalPages - 1) return;         // already on the LAST page (THE END)
+  if (!canTurnNext()) return;
   animating = true;
   const leaf = leaves[flipped];                  // the page to turn
   flipped++;
   turnLeaf(leaf);
 }
 function goPrev() {
-  if (!opened || !ready || animating) return;   // wait until the cover has fully opened
-  if (flipped <= 0) return;               // already on the first page
+  if (!canTurnPrev()) return;
   animating = true;
   flipped--;
   turnLeaf(leaves[flipped]);
 }
 
-/* ---- Nav state (page counter removed) ----------------------------------- */
+/* ---- Nav state — the ONE owner of BACK / NEXT -----------------------------
+   A dead control is HIDDEN, never greyed: we set BOTH .is-hidden (display:none,
+   see the NAV CONTROL SET block in styles.css) and `disabled`, so it can't be
+   seen, clicked, tabbed to or read out. */
+/* ---- GLOW PULSE ---------------------------------------------------------
+   The forward arrow spends most of a video page hidden, then simply materialises
+   the instant the clip finishes — easy to miss when the reader's eyes are on the
+   middle of the page, not its bottom corner. So it announces itself: a few soft
+   gold swells that grow out of the arrow and fade, leaving it in its ordinary
+   resting state. The animation carries no fill mode on purpose, so the final
+   frame IS the normal look rather than a held keyframe.
+   (The previous cue blinked the arrow down to 20% opacity, which read as a
+   rendering glitch rather than an invitation — hence a glow, not a blink.) */
+const NAV_PULSE_MS = 2250;              // 3 swells; keep in sync with navPulse in styles.css
+let _navPulseTimer = null;
+function pulseNav(btn) {
+  if (!btn) return;
+  clearTimeout(_navPulseTimer);
+  btn.classList.remove("pulse");
+  void btn.offsetWidth;                 // reflow → the animation restarts cleanly
+  btn.classList.add("pulse");
+  // Drop the class again so a later re-appearance can replay it.
+  _navPulseTimer = setTimeout(function () { btn.classList.remove("pulse"); }, NAV_PULSE_MS + 60);
+}
+
+function setNav(btn, hidden) {
+  if (!btn) return;
+  // Fire the cue on the HIDDEN → VISIBLE transition only. updateProgress() runs on
+  // every flip, gate change and overlay toggle, so without this the arrow would
+  // pulse continuously the whole time it was on screen.
+  const wasHidden = btn.classList.contains("is-hidden");
+  btn.classList.toggle("is-hidden", hidden);
+  btn.disabled = hidden;
+  if (btn === cornerNext && wasHidden && !hidden) pulseNav(btn);
+}
 function updateProgress() {
-  // HOME button appears as soon as the cover OPENS (not after the open finishes) —
-  // hidden on the cover and on the last page (THE END, which has its own Replay).
-  if (homeBtn) homeBtn.classList.toggle("show", opened && flipped < totalPages - 1);
-  prevBtn.disabled = flipped <= 0;
-  nextBtn.disabled = flipped >= totalPages - 1;
-  if (cornerPrev) cornerPrev.disabled = !ready || flipped <= 0;             // grey the back corner at page 1
-  if (cornerNext) cornerNext.disabled = !ready || flipped >= totalPages - 1; // grey forward on THE END page
+  const onLast = flipped >= totalPages - 1;      // THE END page (it has its own Replay)
+  // BACK  — gone until the book is ready, on the first page / the cover, and for
+  // the whole time the game is up (there is no book behind it to go back to).
+  setNav(cornerPrev, !ready || flipped <= 0 || lbdFullscreen);
+  // NEXT  — gone until ready, on the last page, and while this page's gate is shut
+  // (on a video page that means: hidden until the clip has played all the way
+  // through — see VIDEO GATE — so it appears exactly when there is more to read).
+  setNav(cornerNext, !ready || onLast || isNextLocked());
 }
 
 /* ---- Fullscreen: go FULLSCREEN when the book opens (the Play tap is the user
    gesture the Fullscreen API requires) and LEAVE fullscreen when back at the
-   cover (Home / Replay). Applies on every screen; silently no-ops where the
+   cover (Replay). Applies on every screen; silently no-ops where the
    browser blocks it (e.g. iPhone Safari can't fullscreen arbitrary elements). */
 function enterFullscreen() {
   try {
@@ -612,19 +1210,25 @@ function runOpenSequence() {
   updateProgress();
 }
 function openBook() {
-  console.log("[The Story Night] openBook() called — opened was:", opened);
   if (opened) return;
+  // THE GATE. Hiding the PLAY button stops the obvious route in, but not Enter or
+  // Space on a focused button, a keyboard shortcut, or anything calling openBook()
+  // directly — and opening before the media is local is exactly the stall the
+  // preloader exists to remove. So the guard lives HERE, on the function itself,
+  // and the request is remembered: preloadFinish() replays it the moment we're ready.
+  if (!assetsReady) { startPending = true; return; }
   opened = true;
   enterFullscreen();          // Play tap is a user gesture → allowed to go fullscreen
   runOpenSequence();
 }
 
 /* ---- Reset the whole book to the START SCREEN: the CLOSED FRONT COVER + Play
-   button, exactly like a fresh load (so tapping Play reads from the top). Shared
-   by Replay and Home (called once the closing swing has finished). --------- */
+   button, exactly like a fresh load (so tapping Play reads from the top). Called
+   by Replay, once the closing swing has finished. -------------------------- */
 function resetToStart() {
   exitFullscreen();           // back at the cover → leave fullscreen
-  ready = false; opened = false; flipped = 0;
+  ready = false; opened = false; closing = false; flipped = 0;
+  settleFlip();                                // drop any page-turn still in flight
   renderLeaves();
   leaves.forEach(function (leaf) {
     var vv = leaf.querySelector("video.page-media");
@@ -641,23 +1245,36 @@ function resetToStart() {
   bookFloat.classList.remove("rest");          // resume the idle bob
   tapCatcher.style.pointerEvents = "auto";     // Play is tappable again
   hideFlipHint(); clearTimeout(idleHintTimer); clearTimeout(nudgeHideTimer);
-  if (homeBtn) homeBtn.classList.remove("show");
-  try { bgMusic.pause(); bgMusic.currentTime = 0; } catch (_) {}   // stop music; restarts on Play
-  updateProgress();                            // hides the progress read-out (not opened)
+  // re-arm every content gate, so a fresh read gates its pages again
+  Object.keys(gatesCleared).forEach(function (k) { delete gatesCleared[k]; });
+  // …and every VIDEO gate too: a fresh read plays each clip through again before
+  // its NEXT appears. Clearing `pageSeen` is what makes that true — otherwise the
+  // "already seen it" unlock would carry over from the previous read and the whole
+  // second read would be ungated.
+  stopVideoWatchdog();
+  Object.keys(videoWatched).forEach(function (k) { delete videoWatched[k]; });
+  Object.keys(pageSeen).forEach(function (k) { delete pageSeen[k]; });
+  if (bgMusic) { try { bgMusic.pause(); bgMusic.currentTime = 0; } catch (_) {} }  // restarts on Play
+  updateProgress();                            // back on the cover → both controls gone
 }
 
 /* ---- CLOSE THE BOOK: the cover swings SHUT — the exact REVERSE of the opening
-   hinge (cover −180 → 0) — and the book lands on the front cover. Shared by HOME
-   (while reading) and REPLAY (from THE END page). `afterReset` runs once we're
-   back on the cover. ------------------------------------------------------ */
+   hinge (cover −180 → 0) — and the book lands on the front cover. Used by REPLAY
+   (from THE END page). `afterReset` runs once we're back on the cover. ------ */
 function closeBookToCover(afterReset) {
   ready = false;                               // block flips during the close
+  closing = true;
+  settleFlip();                                // land any page-turn in flight, now
   clearTimeout(_openTimer);
-  clearTimeout(_homeTimer);
+  clearTimeout(_closeTimer);
   hideFlipHint(); clearTimeout(idleHintTimer); clearTimeout(nudgeHideTimer);
-  if (cornerNext) cornerNext.classList.remove("blink", "blink1");
-  if (homeBtn) homeBtn.classList.remove("show");
+  if (cornerNext) cornerNext.classList.remove("blink", "pulse");
+  updateProgress();                            // BACK / NEXT both leave the screen
   var v = currentVideo(); if (v) { try { v.pause(); } catch (_) {} }
+  // Home / Replay / close can fire from the game page — even mid-fullscreen — and
+  // this route never reaches updateLbdOverlay(), so tear the game down HERE. It
+  // re-warms straight afterwards, so a second read reaches the game page instantly.
+  teardownLbd();
   // pages back UNDER the cover, so the closing cover sweeps over them
   flipbookEl.style.zIndex = "";
   flipbookEl.style.pointerEvents = "none";
@@ -670,7 +1287,7 @@ function closeBookToCover(afterReset) {
   book.classList.remove("open");
   book.classList.add("closing");
   playCoverFlip();
-  _homeTimer = setTimeout(function () {
+  _closeTimer = setTimeout(function () {
     resetToStart();
     if (typeof afterReset === "function") afterReset();
   }, COVER_CLOSE_MS + 60);
@@ -679,16 +1296,8 @@ function closeBookToCover(afterReset) {
 /* ---- REPLAY (button on THE END page): close the book with the reverse-of-open
    swing, land on the front cover, and re-arm the title VO for another read. */
 function replayBook() {
-  if (!opened || animating) return;
+  if (!opened || closing) return;
   closeBookToCover(function () { _titleVoPlayed = false; playTitleVo(); });
-}
-
-/* ---- HOME: close the book (reverse of the opening swing) and land on the front
-   cover. Only available while reading. ------------------------------------ */
-function goHome() {
-  if (!opened || animating) return;
-  if (!ready) { clearTimeout(_openTimer); resetToStart(); return; }  // tapped mid-open → snap back to the cover
-  closeBookToCover();
 }
 
 /* ==========================================================================
@@ -717,14 +1326,11 @@ if (tapCatcher) tapCatcher.addEventListener("mousemove", function (e) {
 // The play button itself (also covers keyboard: Enter/Space on the focused button).
 hint.addEventListener("click", function (e) { e.stopPropagation(); if (!opened) openBook(); });
 
-prevBtn.addEventListener("click", function (e) { e.stopPropagation(); goPrev(); });
-nextBtn.addEventListener("click", function (e) { e.stopPropagation(); goNext(); });
 
 // Bottom-corner flip arrows (outside the book): back = left, forward = right.
 cornerPrev.addEventListener("click", function (e) { e.stopPropagation(); goPrev(); this.blur(); });
 cornerNext.addEventListener("click", function (e) { e.stopPropagation(); goNext(); this.blur(); });
 if (replayBtn) replayBtn.addEventListener("click", function (e) { e.stopPropagation(); replayBook(); this.blur(); });
-if (homeBtn) homeBtn.addEventListener("click", function (e) { e.stopPropagation(); goHome(); this.blur(); });
 
 // Page interaction — DRAG TO TURN: grab the page and it follows your cursor,
 // rotating about the spine, then SNAPS to the nearest state when you let go.
@@ -764,8 +1370,10 @@ if (homeBtn) homeBtn.addEventListener("click", function (e) { e.stopPropagation(
     const dx = e.clientX - startX, dy = e.clientY - startY;
     if (!decided) {
       if (Math.abs(dx) < DECIDE || Math.abs(dx) <= Math.abs(dy)) return;   // wait for a clear horizontal drag
-      if (dx < 0 && flipped < totalPages - 1) { dir = 1;  leaf = leaves[flipped]; }     // turn forward (stop at THE END page)
-      else if (dx > 0 && flipped > 0)         { dir = -1; leaf = leaves[flipped - 1]; } // turn back
+      // Same guards as the buttons (bounds, content gate, overlay) — so a page the
+      // story isn't ready to leave can't even be picked up by a finger.
+      if (dx < 0 && canTurnNext())      { dir = 1;  leaf = leaves[flipped]; }     // turn forward (stop at THE END page)
+      else if (dx > 0 && canTurnPrev()) { dir = -1; leaf = leaves[flipped - 1]; } // turn back
       else { dragging = false; return; }                  // nothing to turn that way
       decided = true;
       leaf.style.transition = "none";                     // follow the finger exactly
@@ -791,34 +1399,26 @@ if (homeBtn) homeBtn.addEventListener("click", function (e) { e.stopPropagation(
     const flick = (D === 1) ? (vx < -FLICK) : (vx > FLICK);
     const complete   = (D === 1) ? (ang > FINISH_DEG || flick)
                                  : (ang < 180 - FINISH_DEG || flick);
-    const endFlipped = (D === 1) ? complete   : !complete;    // does this leaf end up turned?
 
-    animating = true;
     if (C) C.style.opacity = "";
-    if (complete) { playFlip(); flipped += (D === 1) ? 1 : -1; }
-    // Lock in the resting classes + z-index NOW (so nothing pops in later), then
-    // animate the inline transform from the dragged angle to the target. The
-    // .flipped class already holds the same final angle underneath.
+    if (complete) {
+      // A completed drag IS a page turn, so it goes through the SAME goNext /
+      // goPrev the buttons and the keyboard use — one flip engine, every guard
+      // inherited. _dragLeaf tells turnLeaf this page is already part-way round
+      // under an inline transform, so it animates on from the live angle.
+      _dragLeaf = L;
+      if (D === 1) goNext(); else goPrev();
+      _dragLeaf = null;
+      if (animating) return;                              // the turn is on its way
+    }
+    // Not dragged far enough (or a guard refused the turn) → snap the page back to
+    // where it was, using the same settle bookkeeping as a real turn.
+    animating = true;
     L.style.transition = "";                              // restore the CSS flip transition
     void L.offsetWidth;                                   // reflow so it animates FROM the dragged angle
     L.classList.add("flipping");                          // curl shading during the snap
-    renderLeaves();                                       // apply .flipped + z-index immediately
-    refreshMedia();                                       // START the target video INSTANTLY
-    L.style.transform = endFlipped ? "rotateY(-180deg)" : "rotateY(0deg)";
-    updateProgress();
-
-    setTimeout(function () {
-      L.classList.remove("flipping");
-      // Drop the inline transform WITHOUT re-animating: the .flipped class already
-      // holds the final angle, so disabling the transition for this swap prevents
-      // the leaf from briefly swinging back (the "page reappears on the left" glitch).
-      L.style.transition = "none";
-      L.style.transform = "";
-      void L.offsetWidth;                                 // commit with no transition
-      L.style.transition = "";                            // restore for the next turn
-      animating = false; updateProgress();
-      refreshMedia();                                     // re-assert once settled (idempotent safety net)
-    }, FLIP_MS + 40);
+    L.style.transform = (D === -1) ? "rotateY(-180deg)" : "rotateY(0deg)";
+    scheduleSettle(L);
   }
   flipbookEl.addEventListener("pointerup", endDrag);
   flipbookEl.addEventListener("pointercancel", endDrag);
@@ -874,21 +1474,30 @@ window.addEventListener("orientationchange", onViewportChange);
 })();
 
 /* ==========================================================================
-   SOUND  —  real audio files in sfx/: Page flip.mp3 (every page flip),
-   cover page flip.mp3 (the cover opening), and BG Music.mp3 (looping background
-   music at 40% volume). All muted until the book is opened (a user gesture).
+   SOUND  —  the two one-shot flip effects live in sfx/ as Ogg/Opus
+   (Page flip.ogg, cover page flip.ogg) and are ALSO inlined as base64 in
+   sfx-data.js so they decode on file://. Muted until the book is opened.
+
+   TWO OPTIONAL TRACKS live here as well — a title voice-over and looping
+   background music. Neither audio file has ever existed in this project, so both
+   were requesting a missing file and 404ing on every single load. They are now
+   OPT-IN: drop the file in sfx/ and put its path in the matching constant below,
+   and the feature switches itself back on. Empty string = no element, no request.
    ========================================================================== */
 let muted = true;
 
-/* ---- Title voice-over: "The Story Night" ---------------------------------
-   Plays as soon as the flipbook loads. Browsers BLOCK audible autoplay before
-   any user interaction, so if the load-time attempt is refused we play it on the
-   very first user gesture (tap / key / touch) instead. Plays ONCE per load.
-   (.ogg plays in Chrome/Edge/Firefox; Safari would need an .mp3/.m4a version.) */
-const titleVo = new Audio("sfx/the%20story%20night.ogg");
-titleVo.preload = "auto";
-try { titleVo.load(); } catch (_) {}         // buffer it NOW so playback is instant (no start lag)
-const TITLE_VO_SKIP = 0;                      // seconds to skip if the CLIP has leading silence (bump to e.g. 0.4)
+/* ---- OPTIONAL audio. Set a path to enable; "" keeps it off entirely. ------
+   Codec note: Ogg/Opus plays in Chrome, Edge, Firefox and Safari 17+. For older
+   Safari, ship an .m4a/.mp3 alongside and point these at that instead. */
+const TITLE_VO_SRC  = "";      // e.g. "sfx/title.ogg"  — plays once on load
+const BG_MUSIC_SRC  = "";      // e.g. "sfx/bgm.ogg"    — loops quietly while reading
+
+/* ---- Title voice-over ----------------------------------------------------
+   Browsers BLOCK audible autoplay before any interaction, so if the load-time
+   attempt is refused we play it on the very first gesture instead. Once per load. */
+const titleVo = TITLE_VO_SRC ? new Audio(TITLE_VO_SRC) : null;
+if (titleVo) { titleVo.preload = "auto"; try { titleVo.load(); } catch (_) {} }
+const TITLE_VO_SKIP = 0;                      // seconds to skip if the clip has leading silence
 let _titleVoPlayed = false;
 function _titleGesture() {
   window.removeEventListener("pointerdown", _titleGesture, true);
@@ -897,27 +1506,31 @@ function _titleGesture() {
   playTitleVo();
 }
 function playTitleVo() {
-  if (_titleVoPlayed) return;
+  if (!titleVo || _titleVoPlayed) return;
   try { titleVo.currentTime = TITLE_VO_SKIP; } catch (_) {}
   const p = titleVo.play();
   if (p && p.then) p.then(function () { _titleVoPlayed = true; }).catch(function () {});
   else _titleVoPlayed = true;
 }
-// Arm the first-gesture fallback IMMEDIATELY (so the very first tap fires the VO
-// with ZERO delay) AND attempt autoplay right now — whichever the browser allows
-// first wins; the other is a no-op (guarded by _titleVoPlayed).
-window.addEventListener("pointerdown", _titleGesture, true);
-window.addEventListener("keydown",     _titleGesture, true);
-window.addEventListener("touchstart",  _titleGesture, true);
-playTitleVo();   // try to autoplay the moment the flipbook loads
+if (titleVo) {
+  // Arm the first-gesture fallback IMMEDIATELY (so the very first tap fires the VO
+  // with ZERO delay) AND attempt autoplay right now — whichever the browser allows
+  // first wins; the other is a no-op (guarded by _titleVoPlayed).
+  window.addEventListener("pointerdown", _titleGesture, true);
+  window.addEventListener("keydown",     _titleGesture, true);
+  window.addEventListener("touchstart",  _titleGesture, true);
+  playTitleVo();
+}
 
-// Looping BACKGROUND MUSIC at 40% volume. Started on open (a user gesture) so
-// the browser allows it to play with sound.
-const bgMusic = new Audio("sfx/BG%20Music.mp3");
-bgMusic.loop = true;
-bgMusic.volume = 0.20;                      // 20% volume, per request
-bgMusic.preload = "auto";
+/* ---- Looping background music (quiet). Started on open — a user gesture. -- */
+const bgMusic = BG_MUSIC_SRC ? new Audio(BG_MUSIC_SRC) : null;
+if (bgMusic) {
+  bgMusic.loop = true;
+  bgMusic.volume = 0.20;
+  bgMusic.preload = "none";      // only fetched when it is actually started
+}
 function playBgMusic() {
+  if (!bgMusic) return;
   try {
     const p = bgMusic.play();
     if (p && p.catch) p.catch(function () {});   // ignore autoplay rejections
@@ -968,10 +1581,13 @@ let audioCtx = null;
 const sfxBuf = {};                          // name -> { buffer, offset (seconds) }
 
 // Fallback <audio> elements — used ONLY if Web Audio fails to init or decode.
-const flipSound = new Audio("sfx/Page%20flip.mp3");
-flipSound.preload = "auto";
-const coverFlipSound = new Audio("sfx/cover%20page%20flip.mp3");
-coverFlipSound.preload = "auto";
+// preload="none" on BOTH: these are only the fallback path (Web Audio + the inlined
+// base64 in sfx-data.js is the normal one), and the preloader hands them their bytes
+// as a blob. Letting them self-download would fetch each clip twice.
+const flipSound = new Audio(SFX_FLIP_URL);
+flipSound.preload = "none";
+const coverFlipSound = new Audio(SFX_COVER_URL);
+coverFlipSound.preload = "none";
 coverFlipSound.volume = 0.35;
 
 (function initSfx() {
@@ -1054,24 +1670,41 @@ function soundOn() {
    while idle and is cancelled by any tap / key / flip. Never on the last page or
    while the LBD game is open.
    ========================================================================== */
-// The nudge is a HAND on the RIGHT side of the book. Drop your 3D-hand art at
-// assets/hand-nudge.png and it's used automatically; until it exists, an emoji
-// hand stands in (the <img> error handler swaps to it).
-let flipHint = document.createElement("img");
-flipHint.className = "flip-hint";
+/* The nudge is a HAND on the RIGHT side of the book.
+   The nudge art has never existed in this project, so the <img> that pointed at it
+   404'd on EVERY load and then swapped itself for the emoji — a guaranteed failed
+   request to reach a fallback we could have used directly. So the emoji IS the
+   default now, and the artwork is opt-in: drop a file in assets/ and name it here.
+   Empty string = no <img>, no request. */
+const FLIP_HINT_ART = "";        // e.g. "assets/hand-nudge.png"
+
+let flipHint;
+if (FLIP_HINT_ART) {
+  flipHint = document.createElement("img");
+  flipHint.className = "flip-hint";
+  flipHint.alt = "";
+  flipHint.decoding = "async";
+  flipHint.src = FLIP_HINT_ART;
+  // Belt and braces: if the named file is missing too, fall back rather than
+  // showing a broken image.
+  flipHint.addEventListener("error", function () {
+    const el = makeEmojiHint();
+    if (flipHint.parentNode) flipHint.parentNode.replaceChild(el, flipHint);
+    flipHint = el;               // later show/position calls use the swapped-in element
+  }, { once: true });
+} else {
+  flipHint = makeEmojiHint();
+}
 flipHint.setAttribute("aria-hidden", "true");
-flipHint.alt = "";
-flipHint.decoding = "async";
-flipHint.src = "assets/hand-nudge.png";
-flipHint.addEventListener("error", function () {
+document.body.appendChild(flipHint);
+
+function makeEmojiHint() {
   const el = document.createElement("div");
   el.className = "flip-hint flip-hint--emoji";
   el.setAttribute("aria-hidden", "true");
   el.textContent = "👆";
-  if (flipHint.parentNode) flipHint.parentNode.replaceChild(el, flipHint);
-  flipHint = el;                 // later show/position calls use the swapped-in element
-}, { once: true });
-document.body.appendChild(flipHint);
+  return el;
+}
 
 // Guidance timing: the FIRST nudge appears 5s AFTER the current page's video
 // finishes playing (so it never competes with the video). It then plays ONCE,

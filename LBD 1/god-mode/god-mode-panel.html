@@ -1,0 +1,98 @@
+<!-- Royal Bloom — God Mode panel template.
+     Fetched at runtime into #godModeRoot. Kept out of index.html so the learner build
+     stays clean. god-mode.js carries a byte-identical inline fallback for file:// use. -->
+<div id="gmPanel">
+  <div class="gm-header">
+    <div class="gm-title">⚡ GOD MODE<small>Royal Bloom · live editor</small></div>
+    <button class="gm-min" id="gmMin" title="Minimize">–</button>
+  </div>
+  <div class="gm-body">
+    <div class="gm-sec">
+      <h4>Tools</h4>
+      <div class="gm-row gm-grid2">
+        <button class="gm-btn" id="gmToolCursor" title="C — click a node to select, drag to move">✥ Cursor Edit</button>
+        <button class="gm-btn" id="gmToolMarquee" title="Drag a box to select">▭ Box Select</button>
+        <button class="gm-btn" id="gmToolSnap" title="Snap to 10px grid (or hold Shift)">⌗ Snap</button>
+        <button class="gm-btn" id="gmToolLock" title="Lock the selected element">🔒 Lock</button>
+      </div>
+    </div>
+    <div class="gm-sec" id="gmInspector">
+      <h4>Selection</h4>
+      <div id="gmNoSel" class="gm-empty">Turn on Cursor Edit and click any element — or pick one below.</div>
+      <div id="gmSelWrap" style="display:none">
+        <div class="gm-selname" id="gmSelName">—</div>
+        <div class="gm-selmeta" id="gmSelMeta"></div>
+        <div class="gm-row gm-grid2" style="margin-top:8px">
+          <div class="gm-field"><label>X</label><input class="gm-input" id="gmInX" type="number"></div>
+          <div class="gm-field"><label>Y</label><input class="gm-input" id="gmInY" type="number"></div>
+          <div class="gm-field"><label>W</label><input class="gm-input" id="gmInW" type="number"></div>
+          <div class="gm-field"><label>H</label><input class="gm-input" id="gmInH" type="number"></div>
+        </div>
+        <div class="gm-row gm-grid2">
+          <div class="gm-field"><label>Scale</label><input class="gm-input" id="gmInScale" type="number" step="0.05"></div>
+          <div class="gm-field"><label>Opacity</label><input class="gm-input" id="gmInOpacity" type="number" step="0.05" min="0" max="1"></div>
+          <div class="gm-field"><label>Rotate</label><input class="gm-input" id="gmInRot" type="number"></div>
+          <div class="gm-field" id="gmFontField"><label>Font</label><input class="gm-input" id="gmInFont" type="number"></div>
+        </div>
+        <div class="gm-note">Text align</div>
+        <div class="gm-row gm-grid3">
+          <button class="gm-btn" id="gmAlignL">⌫ Left</button>
+          <button class="gm-btn" id="gmAlignC">↔ Center</button>
+          <button class="gm-btn" id="gmAlignR">Right ⌦</button>
+        </div>
+        <div class="gm-note">Align in parent</div>
+        <div class="gm-row gm-grid3">
+          <button class="gm-btn" id="gmPosLeft">⇤ Left</button>
+          <button class="gm-btn" id="gmPosHC">⇔ H-Ctr</button>
+          <button class="gm-btn" id="gmPosRight">Right ⇥</button>
+          <button class="gm-btn" id="gmPosTop">⤒ Top</button>
+          <button class="gm-btn" id="gmPosMid">⇕ V-Mid</button>
+          <button class="gm-btn" id="gmPosBottom">Btm ⤓</button>
+        </div>
+        <div id="gmTextWrap">
+          <div class="gm-note">Text</div>
+          <textarea class="gm-area" id="gmText" placeholder="element text…"></textarea>
+          <div class="gm-row"><button class="gm-btn gm-accent" id="gmApplyText" style="flex:1">Apply Text</button></div>
+        </div>
+        <div class="gm-row gm-grid3">
+          <button class="gm-btn" id="gmFwd" title="Bring forward">▲ Fwd</button>
+          <button class="gm-btn" id="gmBack" title="Send backward">▼ Back</button>
+          <button class="gm-btn" id="gmDup" title="Duplicate ghost">⧉ Ghost</button>
+        </div>
+        <div class="gm-row gm-grid2">
+          <button class="gm-btn gm-danger" id="gmDelete" title="Delete (Del)">🗑 Delete</button>
+          <button class="gm-btn" id="gmResetSel">↺ Reset</button>
+        </div>
+        <div class="gm-row gm-grid2">
+          <button class="gm-btn" id="gmCopyVals">⧉ Copy Values</button>
+          <button class="gm-btn" id="gmCopyPatch">{ } Copy Patch</button>
+        </div>
+      </div>
+    </div>
+    <div class="gm-sec">
+      <h4>Elements</h4>
+      <input class="gm-input gm-search" id="gmSearch" placeholder="Search assets & text…">
+      <label class="gm-check"><input type="checkbox" id="gmVisibleOnly" checked> Visible on screen only</label>
+      <div class="gm-list" id="gmList"></div>
+    </div>
+    <div class="gm-sec">
+      <h4>Screens</h4>
+      <div class="gm-row" id="gmScreens"></div>
+    </div>
+    <div class="gm-sec">
+      <h4>Visual Debug</h4>
+      <label class="gm-check"><input type="checkbox" id="gmDbgBounds"> Show element bounds <span style="color:var(--godMuted)">(B)</span></label>
+      <label class="gm-check"><input type="checkbox" id="gmDbgText"> Show text boxes <span style="color:var(--godMuted)">(T)</span></label>
+      <div class="gm-row"><button class="gm-btn gm-danger" id="gmFindDup" style="flex:1" title="Outline duplicate sprites (doubled hand/dish/body) in red and list them">⧉ Find Duplicate Hands / Art</button></div>
+    </div>
+    <div class="gm-sec">
+      <h4>Session</h4>
+      <div class="gm-row gm-grid3">
+        <button class="gm-btn" id="gmUndo" title="Undo last delete (Ctrl+Z)">↶ Undo</button>
+        <button class="gm-btn" id="gmCopyAll">⧉ Copy All</button>
+        <button class="gm-btn gm-danger" id="gmResetAll">↺ Reset All</button>
+      </div>
+      <div class="gm-note">Everything resets when God Mode turns off — the learner build is never touched.</div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,37 @@
+# ============================================================================
+# What must NOT be deployed.
+#
+# The deployed site is: index.html, styles.css, script.js, sfx-data.js,
+# assets/, sfx/ and game/ — nothing else. Everything listed here is either
+# authoring source, dev tooling, or documentation; shipping any of it would
+# roughly double the payload for zero user benefit.
+# ============================================================================
+
+# The game's AUTHORING copy. game/ is the learner build that actually ships;
+# "LBD 1/" is the full source with the God Mode design suite, the QA harness and
+# the data scripts. ~11MB, none of it reachable from the site.
+LBD 1/
+
+# Dev tooling / docs that may sit alongside the game copy
+game/god-mode/
+game/qa/
+game/scripts/
+game/*.md
+game/vercel.json
+
+# Editor + OS cruft
+.vscode/
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+Desktop.ini
+*~
+*.tmp
+*.bak
+*.orig
+
+# Source control + node
+.git/
+.gitignore
+node_modules/

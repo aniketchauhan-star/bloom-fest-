@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Royal Bloom</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="boot">Loading Royal Bloom…</div>
+  <div id="viewport">
+    <div id="stage" role="application" aria-label="Royal Bloom balance-scale game"></div>
+  </div>
+
+  <!-- Landscape game: on a portrait phone/tablet the 16:9 stage would be tiny, so ask for a turn. -->
+  <div id="rotate" aria-hidden="true">
+    <div class="rotate-inner">
+      <div class="rotate-phone">📱</div>
+      <p>Please turn your device sideways<br />to play Royal Bloom</p>
+    </div>
+  </div>
+
+  <script src="js/data.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/audio-manager.js"></script>
+  <script src="js/interaction.js"></script>
+  <script src="js/controllers.js"></script>
+  <script src="js/main.js"></script>
+
+  <!-- ===== God Mode (dev/design tool) — delete this block to ship the learner build ===== -->
+  <link rel="stylesheet" href="god-mode/god-mode.css" />
+  <script src="god-mode/god-mode-utils.js"></script>
+  <script src="god-mode/god-mode-live-editor.js"></script>
+  <script src="god-mode/god-mode.js"></script>
+  <!-- ===== end God Mode ===== -->
+
+  <script>
+    // main.js reveals the game once the first screen's art is decoded (window.__rbHideBoot).
+    // This is only a safety fallback in case the scripts fail to load.
+    setTimeout(function () {
+      (window.__rbHideBoot || function () { var b = document.getElementById('boot'); if (b) b.remove(); })();
+    }, 6000);
+  </script>
+</body>
+</html>
