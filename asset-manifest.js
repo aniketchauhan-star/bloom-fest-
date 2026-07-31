@@ -3,7 +3,7 @@
    is accurate from the very first frame instead of guessing and jumping.
    Keys are the EXACT request URLs (encoded per segment). Regenerate whenever
    media is added, removed or re-encoded:  node tools/gen-asset-manifest.mjs
-   144 files, 24.34 MB total. */
+   144 files, 24.40 MB total. */
 window.ASSET_MANIFEST = {
   "game/assets/img/Group_6.webp": 1264,
   "game/assets/img/Group_540-1.webp": 1786,
@@ -22,7 +22,7 @@ window.ASSET_MANIFEST = {
   "game/assets/img/drag-hand.webp": 3838,
   "game/assets/img/The_Royal_Bloom_Fest__26__2.webp": 4326,
   "game/assets/img/paper_fan.webp": 4386,
-  "game/css/style.css": 4922,
+  "game/css/style.css": 5053,
   "game/assets/img/Untitled_design__21__8.webp": 5334,
   "game/js/audio-manager.js": 5512,
   "game/assets/img/Group_574.webp": 5584,
@@ -103,8 +103,8 @@ window.ASSET_MANIFEST = {
   "game/assets/img/The_Royal_Bloom_Fest__13__1.webp": 31380,
   "game/assets/audio/Drag_the_heavier_item_to_the_wagon_and_lighter_item_to.ogg": 32345,
   "game/assets/img/0001.webp": 33482,
-  "game/js/engine.js": 34422,
   "game/assets/img/0055.webp": 34452,
+  "game/js/engine.js": 35071,
   "game/assets/audio/magical.ogg": 36920,
   "game/assets/img/Group_541-1.webp": 38384,
   "game/assets/img/003.webp": 38428,
@@ -122,7 +122,7 @@ window.ASSET_MANIFEST = {
   "game/assets/img/ChatGPT_Image_May_4__2026__11_23_34_AM_1.webp": 71608,
   "game/assets/img/IMG_5033.webp": 73790,
   "game/assets/img/IMG_5028.webp": 74168,
-  "assets/posters/1.webp": 75036,
+  "assets/posters/1.webp": 74886,
   "game/assets/img/IMG_5026.webp": 75304,
   "game/assets/img/IMG_5024.webp": 75474,
   "game/assets/img/IMG_5031.webp": 75540,
@@ -134,7 +134,7 @@ window.ASSET_MANIFEST = {
   "game/assets/img/IMG_5027.webp": 77508,
   "game/assets/img/IMG_5032.webp": 77620,
   "game/assets/img/Rectangle_100.webp": 82636,
-  "assets/posters/2.webp": 84094,
+  "assets/posters/2.webp": 83902,
   "assets/posters/5.webp": 94942,
   "assets/cover%20page.webp": 139148,
   "game/assets/img/Slide_16_9_-_192.webp": 148974,
@@ -144,9 +144,9 @@ window.ASSET_MANIFEST = {
   "game/assets/img/Vector__6_.webp": 556806,
   "game/js/data.js": 926316,
   "game/assets/audio/bgm.ogg": 1567229,
-  "assets/4.webm": 2344323,
-  "assets/2.webm": 3224276,
-  "assets/3.webm": 3763312,
-  "assets/1.webm": 3883878,
-  "assets/5.webm": 4120421
+  "assets/4.webm": 2248777,
+  "assets/2.webm": 3222514,
+  "assets/3.webm": 3770968,
+  "assets/1.webm": 4028874,
+  "assets/5.webm": 4122726
 };
