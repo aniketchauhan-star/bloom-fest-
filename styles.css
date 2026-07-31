@@ -143,7 +143,9 @@
      transformed book layer and never cover the pages or their corners (which
      keeps the hover page-curl working on every corner).
      BARE GLYPH — no background fill, no border, no box-shadow, no rounded pill:
-     only the arrow glyph is visible, but the whole box stays clickable.
+     only the arrow glyph is visible, but the whole box stays clickable. It is
+     kept findable on pale artwork by a stacked DARK HALO on the glyph itself
+     (see the filter on .corner-arrow), never by a drawn shape behind it.
      ⚠ --nav-box and --nav-arrow-x are MIRRORED IN JS: fitScale() in script.js
      reserves this horizontal footprint so the artwork can never sit under a
      button. If these clamps change, change the JS clamps in the SAME commit.
@@ -161,8 +163,14 @@
     margin: 0; padding: 0;
     border: none; border-radius: 0; background: none; box-shadow: none;
     color: var(--nav-gold);
-    /* keeps the glyph legible over any page artwork */
-    filter: drop-shadow(0 2px 7px rgba(0,0,0,0.55));
+    /* DARK HALO, NOT A SHAPE. One soft shadow was not enough to find the glyph on
+       a pale page, so it is three stacked dark shadows: a tight near-black one
+       that reads as an outline on the gold, then two wider ones that darken the
+       artwork right around it. The arrow gains contrast with no disc, pill or
+       border drawn anywhere. */
+    filter: drop-shadow(0 0  2px rgba(0,0,0,0.95))
+            drop-shadow(0 0  7px rgba(0,0,0,0.85))
+            drop-shadow(0 3px 16px rgba(0,0,0,0.7));
     display: none;                     /* not reading yet → not on screen at all */
     align-items: center; justify-content: center;
     cursor: pointer; opacity: 0.96;
@@ -265,14 +273,18 @@
   @keyframes navPulse {
     0%, 100% {
       transform: scale(1);
-      filter: drop-shadow(0 2px 7px rgba(0,0,0,0.55))
+      filter: drop-shadow(0 0  2px rgba(0,0,0,0.95))
+              drop-shadow(0 0  7px rgba(0,0,0,0.85))
+              drop-shadow(0 3px 16px rgba(0,0,0,0.7))
               drop-shadow(0 0  0px rgba(255,255,255,0))
               drop-shadow(0 0  0px rgba(125,62,168,0))
               brightness(1);
     }
     50% {
       transform: scale(1.12);
-      filter: drop-shadow(0 2px 7px rgba(0,0,0,0.55))
+      filter: drop-shadow(0 0  2px rgba(0,0,0,0.95))
+              drop-shadow(0 0  7px rgba(0,0,0,0.85))
+              drop-shadow(0 3px 16px rgba(0,0,0,0.7))
               drop-shadow(0 0 14px rgba(255,255,255,0.95))
               drop-shadow(0 0 34px rgba(125,62,168,0.75))
               brightness(1.15);
