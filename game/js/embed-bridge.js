@@ -218,41 +218,77 @@
       if (f.finalScreenAudio && f.finalScreenAudio.audio) finalClips.push(f.finalScreenAudio.audio);
     });
 
-    // The AudioManager hands back the element it is about to play; keep the last
-    // one so we can wait on the closing VO by identity rather than by guessing.
-    var lastNarration = null;
-    if (window.AudioManager && window.AudioManager.startNarration) {
-      var origStart = window.AudioManager.startNarration;
-      window.AudioManager.startNarration = function (src) {
-        var el = origStart.apply(this, arguments);
-        if (el) lastNarration = { el: el, src: src };
-        return el;
-      };
-    }
-
     var completed = false;
     function complete() {
       if (completed) return; completed = true;
       post("lbd-complete");
     }
 
-    // SAFETY: a missing / un-decodable clip must never strand the learner on a
-    // screen with no way out, so the wait is always bounded.
-    var VO_GRACE_MS = 4000;     // let the last word land before the page turns
-    var VO_MAX_MS   = 30000;    // hard ceiling, whatever the clip claims
-    var NO_VO_MS    = 3000;     // no closing VO → just a beat on the celebration
+    // SAFETY: a missing / blocked / un-decodable clip must never strand the learner
+    // on a screen with no way out, so every wait below is bounded.
+    var VO_GRACE_MS   = 1200;   // let the last word land, then the button appears
+    var VO_MAX_MS     = 45000;  // hard ceiling, whatever the clip claims
+    var NO_VO_MS      = 3000;   // no closing VO at all → just a beat on the celebration
+    var VO_ARM_MS     = 2000;   // how long the final screen waits for a VO to start
+    var VO_START_MS   = 3000;   // play() may take this long to make actual sound
+    var POLL_MS       = 200;
+
+    /* ---- Wait for the closing VO to FINISH SPEAKING -----------------------
+       Event-only was not enough. safePlay() is async, so at any fixed moment
+       after the final screen appears the element can still be paused with
+       currentTime 0 — "not playing yet" is indistinguishable from "not playing
+       at all" — and the old code read that as no-VO and released the button 3s
+       in, over the top of the voice. So this polls the element instead and only
+       gives up on four honest outcomes: it ended, it reached its own duration,
+       it never made a sound at all, or it was interrupted after starting. */
+    var voArmed = false;
+    function armFinalVo(el) {
+      if (voArmed || completed || !el) return;
+      voArmed = true;
+      var started = false, waited = 0, iv = null;
+
+      function release() {
+        if (iv) { clearInterval(iv); iv = null; }
+        setTimeout(complete, VO_GRACE_MS);
+      }
+      el.addEventListener("ended", release, { once: true });
+
+      iv = setInterval(function () {
+        waited += POLL_MS;
+        if (completed) { clearInterval(iv); iv = null; return; }
+        if (!el.paused && el.currentTime > 0) started = true;
+        var atEnd   = el.ended ||
+                      (isFinite(el.duration) && el.duration > 0 && el.currentTime >= el.duration - 0.2);
+        var silent  = !started && waited >= VO_START_MS;   // play() never produced sound
+        var cutOff  = started && el.paused && !el.ended;   // stopNarration() / another clip took over
+        if (atEnd || silent || cutOff || waited >= VO_MAX_MS) release();
+      }, POLL_MS);
+    }
+
+    /* The AudioManager hands back the element it is about to play, so the closing
+       clip is caught BY IDENTITY the instant the game starts it — no sampling a
+       `lastNarration` slot 700ms later and hoping it is the right one. */
+    var finalScreenUp = false;
+    if (window.AudioManager && window.AudioManager.startNarration) {
+      var origStart = window.AudioManager.startNarration;
+      window.AudioManager.startNarration = function (src) {
+        var el = origStart.apply(this, arguments);
+        // The closing clip, or — if the config named none — whatever VO the final
+        // screen starts. Anything earlier in the game is ignored.
+        var isFinalClip = finalClips.indexOf(src) >= 0 || (!finalClips.length && finalScreenUp);
+        if (el && isFinalClip) armFinalVo(el);
+        return el;
+      };
+    }
 
     function waitForEndingThenComplete() {
-      // showFinalScreen() reveals the node and starts the VO in the same tick;
-      // give it a moment so `lastNarration` is the CLOSING clip, not the previous one.
+      finalScreenUp = true;
+      // showFinalScreen() reveals the node and starts the VO in the same run, but
+      // it awaits between the two on some levels — so allow a beat for the clip to
+      // be armed before concluding this ending is a silent one.
       setTimeout(function () {
-        var n = lastNarration;
-        var isFinalClip = n && (!finalClips.length || finalClips.indexOf(n.src) >= 0);
-        if (!n || !isFinalClip || n.el.ended || n.el.paused) { setTimeout(complete, NO_VO_MS); return; }
-        n.el.addEventListener("ended", function () { setTimeout(complete, VO_GRACE_MS); }, { once: true });
-        var dur = isFinite(n.el.duration) && n.el.duration > 0 ? n.el.duration * 1000 : 15000;
-        setTimeout(complete, Math.min(dur + VO_GRACE_MS + 2000, VO_MAX_MS));
-      }, 700);
+        if (!voArmed) setTimeout(complete, NO_VO_MS);
+      }, VO_ARM_MS);
     }
 
     function watchFinalScreen(id) {

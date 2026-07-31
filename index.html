@@ -179,17 +179,16 @@
           allowfullscreen
           scrolling="no"></iframe>
 
-  <!-- Shown only once the game has run to its ending (the bridge's "lbd-complete",
-       which has already waited out the closing voice-over). The reader taps this
-       to leave the game and turn to the next story page — nothing advances on its
-       own, so the celebration stays up as long as they want it.
+  <!-- Shown only once the game has run to its ending AND the closing voice-over has
+       finished speaking (the bridge's "lbd-complete" is what waits out the VO). The
+       reader taps this to leave the game and turn to the next story page — nothing
+       advances on its own, so the celebration stays up as long as they want it.
+       WORD ONLY — no arrow glyph. The label carries the meaning; an arrow next to it
+       just competed with the book's own corner arrows for the same job.
        It lives INSIDE .lbd-stage so it stacks above the iframe in fullscreen too;
        a sibling of the stage would sit under it at z-index 1200. -->
   <button class="lbd-next" id="lbdNext" type="button" hidden aria-label="Next page">
     <span>Next</span>
-    <svg viewBox="0 0 48 48" aria-hidden="true">
-      <path d="M46 19 L30 5 L30 12 C20 11 11 15 6 30 L12 33 C18 24 22 24 30 24 L30 33 Z" fill="currentColor"/>
-    </svg>
   </button>
 </div>
 
