@@ -83,6 +83,43 @@ async function runViewport(vp, full) {
   click(goBtn); click(goBtn); click(goBtn);
   ok(await until(() => E.isActive("n5_Tutorial"), 6000), label + "Let's Go -> Tutorial (once)");
 
+  // ---- audio mix: music is a quiet bed and DUCKS under narration (it used to play at full 1.0
+  // and drown the voice). Every channel level is asserted, plus the duck/restore cycle. ----
+  {
+    const AM = H.RB.Audio, lv = AM.levels();
+    ok(lv.bgm <= 0.5 && lv.narration >= 0.9 && lv.sfx < lv.narration, label + "channel levels: music under the voice, full voice, SFX under voice");
+    // ducked BELOW the bed but still clearly audible — narration runs nearly all the time, so the ducked
+    // level is what the music sits at for most of the session; too low and it reads as "not playing"
+    ok(lv.bgmDucked < lv.bgm && lv.bgmDucked >= 0.12, label + "ducked music is lower than the bed but still audible (" + lv.bgmDucked + ")");
+    ok(await until(() => AM.stats().narrationActive, 5000), label + "narration playing after Let's Go");
+    await env.advance(400);                                    // let the duck ramp finish
+    const dk = AM.stats();
+    ok(dk.ducked === true && dk.bgmVolume <= lv.bgmDucked + 0.005, label + "BGM ducked under the voice (" + dk.bgmVolume + ")");
+    AM.stopNarration();
+    await env.advance(400);
+    const up = AM.stats();
+    ok(up.ducked === false && Math.abs(up.bgmVolume - lv.bgm) < 0.005, label + "BGM restored to its bed level when the voice stops (" + up.bgmVolume + ")");
+    ok(typeof E.preloadSprites === "function" && typeof E.artRectLogical === "function", label + "sprite warm + visible-art geometry available");
+  }
+
+  // Every hand / hint / ghost node ANYWHERE in the tree that is currently visible. Scanned globally,
+  // not per level: the Next-button hint hand is a canvas-root node shared by all five levels, and some
+  // levels author their hint hands active, so a stray hand can come from a level that is off screen.
+  // withGhost=false ignores the ghost demo nodes (a legitimate drag guide) and reports only hint hands.
+  function strayHands(withGhost) {
+    const N = E.nodes(), out = [];
+    for (const id of Object.keys(N)) {
+      const nm = (N[id].node && N[id].node.name) || "";
+      if (!/hand|hint|ghost/i.test(nm)) continue;
+      if (withGhost === false && /ghost/i.test(nm)) continue;
+      if (E.isInteractableInTree(id)) out.push(nm.trim() + "/" + id);
+    }
+    return out;
+  }
+
+  // sprite path -> the size it landed at in the first level that dropped it (cross-level size rule)
+  const landedSize = new Map();
+
   async function playLevel(host, testWrong) {
     const f = fields(host);
     const boxBtn = nid(f.boxButton), ball = nid(f.ballDraggable), book = nid(f.bookDraggable);
@@ -93,6 +130,10 @@ async function runViewport(vp, full) {
     const pans = part3Pans(host); const answerMode = f.answerMode;
 
     ok(await until(() => (elById(boxBtn).listeners.click || []).length > 0, 9000), label + host + ": box interactive");
+    // Tappable NOW, hint LATER. These used to be one step, so after the Tutorial the box hand appeared
+    // instantly instead of waiting out the idle gap. The Tutorial still points straight away.
+    { const hh = nid(f.hintHand);
+      if (hh && !f.isFirstLevel) ok(!E.isActive(hh), label + host + ": box hand holds back for the idle gap while the box is already tappable"); }
     // box tap rocks the front box AND its lid together, each a LEAF — never the shared container
     // (which would shake the back box / glow / hidden items). Both animated nodes must be leaves.
     { const bi = nid(f.boxInteractiveVisual) || nid(f.boxImage), bt = nid(f.boxTop);
@@ -102,6 +143,18 @@ async function runViewport(vp, full) {
     // tapping the box must NOT dim it (disable input without the grayscale/opacity fade)
     ok(!/opacity|grayscale/.test(E.get(boxBtn).el.style.filter || ""), label + host + ": box stays fully opaque on tap");
     ok(await until(() => E.isActive(nextP2), 12000), label + host + ": Part2 Next");
+    // every revealed card must actually have its item drawn in it — the reveal is gated on the
+    // sprite being warm, so a card can never sit empty waiting for its picture
+    [nid(f.item3), nid(f.item4)].forEach((cardId, k) => {
+      if (!cardId) return;
+      const paths = [];
+      (function walk(id) { const r = E.get(id); if (!r) return; if (r._img && r._img.enabled !== false && r._img.sprite && r._img.sprite.path) paths.push(r._img.sprite.path); r.children.forEach((c) => walk(c.id)); })(cardId);
+      const painted = paths.length === 0 || (function walk2(id) { const r = E.get(id); if (!r) return false; if (r._painted && r._img && r._img.sprite && r._img.sprite.path) return true; return r.children.some((c) => walk2(c.id)); })(cardId);
+      ok(E.isActive(cardId) && painted, label + host + ": Part2 card " + (k + 1) + " is painted when shown (no empty box)");
+    });
+    // the naming screen must be calm: no sparkle burst on the name scrolls (it pulled the eye off the word)
+    ok(E.confettiCount() === 0, label + host + ": no sparkles on the item-name screen (" + E.confettiCount() + ")");
+    { const s = strayHands(); ok(s.length === 0, label + host + ": no stray hand on the item-name screen (" + s.join(", ") + ")"); }
     // Part 2 name scrolls must OPEN (parchment + centered name), not sit closed with rollers only
     [nid(f.lanternTextObject), nid(f.featherTextObject)].forEach((root, k) => {
       const parch = root && E.childByName(root, "image 01");
@@ -121,6 +174,10 @@ async function runViewport(vp, full) {
     });
     click(nextP2);
     ok(await until(() => E.get(ball)._drag.enabled, 15000), label + host + ": ball enabled");
+    // Part 3 has only just appeared: the idle drag hint has NOT been earned yet, so no hint hand may be
+    // on screen. Level 1 authors its two Part-3 hint hands ACTIVE, which showed them from the first
+    // frame of Part 3 (the level start now forces every hint off). Ghost demo excluded — that is legit.
+    { const s = strayHands(false); ok(s.length === 0, label + host + ": no hint hand when Part 3 opens (" + s.join(", ") + ")"); }
     // genie scale root must NOT paint its own (duplicate) full genie image — only its children draw
     const scId = f.scaleController && f.scaleController.node;
     if (scId) {
@@ -161,11 +218,30 @@ async function runViewport(vp, full) {
     if (testWrong) { dragToZone(book, pans.right); ok(!I.isLocked(book), label + host + ": second item rejected from occupied pan"); }
     dragToZone(book, pans.left);
     ok(await until(() => I.isLocked(book), 4000), label + host + ": book placed");
+    // SEATING: both items must rest IN the bowl — their art bottom lands just below the dish's centre
+    // line, whatever the item's box height. (Centring every item on the drop point left short ones,
+    // e.g. the ribbon, hanging in mid-air above the pan while tall ones reached in.)
+    [[ball, pans.right, "right"], [book, pans.left, "left"]].forEach(([it, zoneId, side]) => {
+      const zr = E.get(zoneId), dish = zr && zr.parent;
+      const art = E.artRectLogical((E.get(it) || {})._imgId || it) || E.worldRectLogical(it);
+      if (!dish || !art) return;
+      const dc = E.centerLogical(dish.id), bottom = art.y + art.h;
+      // seated: below the dish centre (never floating) but not swallowed — the lap scales with the
+      // item, so a short item laps less than a tall one and neither extreme is allowed
+      // Seated = the art bottom is below the dish centre (so the bowl laps over it, never a gap) but
+      // shallow enough that no column of the art can fall past the bowl's silhouette and show under the
+      // pan. 11px is the measured ceiling for the widest item; see SEAT_DEPTH in controllers.js.
+      const lap = bottom - dc.y, artH = art.h;
+      ok(lap >= 6 && lap <= 24, label + host + ": " + side + " item rests in the pan (art bottom +" + Math.round(lap) + "px past the dish centre — not floating, not poking out below)");
+      ok(artH > 0 && lap / artH <= 0.2, label + host + ": " + side + " item is not swallowed by the bowl (" + Math.round(100 * lap / artH) + "% hidden)");
+    });
     ok(await until(() => (elById(bookAns).listeners.click || []).length > 0, 15000), label + host + ": answers enabled");
     // instruction must advance per phase (regression guard: setText took an id, not a rec, so every update was a silent no-op)
     const instrNode = nid(f.instructionText), instrRec = instrNode && E.get(instrNode);
     const instrText = instrRec && instrRec._tmpInner ? instrRec._tmpInner.textContent : "";
     ok(instrText === f.instruction5, label + host + ": instruction advanced to Part3 answer ('" + f.instruction5 + "', got '" + instrText + "')");
+    // no leftover demo/hint hand while the child is being asked to choose (the idle hint comes later)
+    { const s = strayHands(); ok(s.length === 0, label + host + ": no stray hand at the Part3 answer prompt (" + s.join(", ") + ")"); }
     // text must be vertically CENTERED so descenders (g/y/p/j) aren't clipped by the tight box + overflow:hidden
     ok(instrRec && instrRec.el.style.alignItems === "center", label + host + ": instruction text vertically centered (descenders not clipped)");
     const bookLighter = weightOf(book) < weightOf(ball);
@@ -177,6 +253,20 @@ async function runViewport(vp, full) {
       // wrong answer -> Try Again x3, then correct; must not duplicate handlers
       click(correctIsBook ? ballAns : bookAns);
       const tryAgain = nid(f.tryAgainButton);
+      // ...and the retry must arrive WITH the "Oops!" text STARTING - not when the typing (and the voice
+      // it is paced to) finishes, which left the child watching an error with nothing to press.
+      { let tStart = null, tBtn = null;
+        for (let ms = 0; ms < 4000 && tBtn === null; ms += 25) {
+          const txt = (instrRec && instrRec._tmpInner) ? instrRec._tmpInner.textContent : "";
+          if (tStart === null && txt.length > 0 && f.instruction6.startsWith(txt)) tStart = env.vnow();
+          if (E.isActive(tryAgain)) tBtn = env.vnow();
+          if (tBtn === null) await env.advance(25);
+        }
+        const gap = (tStart !== null && tBtn !== null) ? tBtn - tStart : null;
+        ok(gap !== null && gap <= 600, label + host + ": Try Again appears as the Oops line starts (+" + (gap === null ? "?" : Math.round(gap)) + "ms, not after the VO)");
+        // and it must NOT have waited for the whole line to finish typing
+        const typed = (instrRec && instrRec._tmpInner) ? instrRec._tmpInner.textContent : "";
+        ok(typed.length < f.instruction6.length || f.instruction6.length <= 8, label + host + ": Try Again did not wait for the line to finish (" + typed.length + "/" + f.instruction6.length + " chars typed)"); }
       for (let k = 0; k < 3; k++) {
         ok(await until(() => E.isActive(tryAgain), 12000), label + host + ": Try Again #" + (k + 1));
         click(tryAgain);
@@ -207,9 +297,21 @@ async function runViewport(vp, full) {
     // the Part-4 drag-guide hand is authored under Part 3 (hidden here); it must be re-hosted on the
     // level root so it actually shows. When it appears, every ancestor must be visible.
     { const gh = nid(f.ghostHand);
-      if (gh && await until(() => E.isActive(gh), 2500)) {
+      const tReady = env.vnow();
+      if (gh && await until(() => E.isActive(gh), 12000, 100)) {
+        const idleWait = (env.vnow() - tReady) / 1000;
         const vis = (id) => { let r = E.get(id); while (r) { if ((r.node && r.node.active === false) || (r.el && r.el.style.display === "none")) return false; r = r.parent; } return true; };
-        ok(vis(gh), label + host + ": Part-4 drag-guide hand visible (re-hosted off the hidden Part 3)"); } }
+        ok(vis(gh), label + host + ": Part-4 drag-guide hand visible (re-hosted off the hidden Part 3)");
+        // it must FADE up, not blink on at full opacity (polling is 100ms, the fade is 450ms)
+        ok(E.getAlpha(gh) < 0.95, label + host + ": drag hand fades in rather than popping (alpha " + E.getAlpha(gh).toFixed(2) + ")");
+        // The Tutorial teaches (demonstrates quickly); after it the child gets 8s of quiet to try for
+        // themselves before a hand appears. Poll granularity is 100ms, hence the tolerance.
+        if (f.isFirstLevel) ok(idleWait <= 7, label + host + ": Tutorial demonstrates without a long wait (" + idleWait.toFixed(1) + "s)");
+        else ok(idleWait >= 7.5 && idleWait <= 9.5, label + host + ": hand waits ~8s of idle before helping (" + idleWait.toFixed(1) + "s)");
+        // exactly ONE hand: the animated ghost. The static hand-on-the-card overlay (and its dotted
+        // arrow art) used to show at the same time, so the child saw two hands and an arrow at once.
+        const others = strayHands(false);
+        ok(others.length === 0, label + host + ": only the animated hand demos the drag — no second/sticky hand (" + others.join(", ") + ")"); } }
     // Part 4 drop targets must be invisible hit areas, not pre-placed item sprites (Bug D)
     Object.keys(CFG.baskets).filter((z) => nid(CFG.baskets[z].gameManager) === host && CFG.baskets[z].isPart4).forEach((z) => {
       const marker = nid(CFG.baskets[z].basketImage) || z, mel = E.get(marker).el;
@@ -243,8 +345,13 @@ async function runViewport(vp, full) {
       ok(E.isActive(nid(f.part4Object)) && !E.isActive(nid(f.part3Object)), label + host + ": Part4 restored after wrong hint");
       ok(RB.gmByHost[host].diagnostics().placed4 === 0, label + host + ": item restored after wrong Part4");
     }
+    const sfxBefore = H.RB.Audio.stats().sfxPlays;
     dragToZone(lighter, basketDrop);
     ok(await until(() => RB.gmByHost[host].diagnostics().placed4 >= 1, 4000), label + host + ": lighter->basket");
+    // a single drop is NOT a celebration: no sparkles until the stage is finished (both items sorted)
+    ok(E.confettiCount() === 0, label + host + ": no star burst on an individual drop (" + E.confettiCount() + ")");
+    // a correct drop now SOUNDS as well as sparkles
+    ok(H.RB.Audio.stats().sfxPlays > sfxBefore, label + host + ": basket drop plays a sound");
     // placed item must NESTLE inside the basket: parented into the SAME (back) layer as its ghost
     // marker, last sibling there (above ghost + decorations), while the FRONT basket art is a later
     // sibling of that layer — so the front rim draws over the item's lower edge (tucked in, not
@@ -254,16 +361,39 @@ async function runViewport(vp, full) {
       const back = lr.parent, grand = back && back.parent, bi = grand ? grand.children.indexOf(back) : -1;
       ok(bi >= 0 && bi < grand.children.length - 1, label + host + ": front basket art draws over the nestled item (item behind front layer)");
       ok(back.children[back.children.length - 1] === lr, label + host + ": placed item above ghost/decorations within the back layer"); }
+    await env.advance(400);        // a child cannot drop two items in the same instant (identical SFX are debounced 120ms so they can't stack)
+    const sfxBefore2 = H.RB.Audio.stats().sfxPlays;
     dragToZone(heavier, trolleyDrop);
     ok(await until(() => RB.gmByHost[host].diagnostics().placed4 >= 2, 4000), label + host + ": heavier->wagon");
-    // placed items must be SIZED to their ghost marker's box (so they sit INSIDE the basket/wagon,
-    // never overflowing onto the rim). rendered = itemSizeDelta * scale must fit within the marker.
+    ok(H.RB.Audio.stats().sfxPlays > sfxBefore2, label + host + ": wagon drop plays a sound");
+    // Part 4 finishing bursts BOTH containers at once — the worst frame-rate moment in the game. The
+    // particle count must stay capped (it used to be 64 per burst, each with its own rAF + 2 blur passes).
+    ok(E.confettiCount() <= 80, label + host + ": Part-4 finish keeps the sparkle count capped (" + E.confettiCount() + ")");
+    ok(E.confettiCount() > 0, label + host + ": stage completion DOES burst the stars (" + E.confettiCount() + ")");
+    // Placed items sit INSIDE the basket/wagon, sized from their ghost marker — but an item that has
+    // already landed in an earlier level keeps THAT size (DROP_SIZE), so the same object never changes
+    // size between levels. The marker bound is therefore a sanity limit, not an exact fit.
     [[lighter, basketDrop, "basket"], [heavier, trolleyDrop, "wagon"]].forEach(([it, slot, where]) => {
       const ir = E.getRect(it), sr = slot && E.getRect(slot), r = E.get(it);
       if (ir && sr) {
         const rw = ir.sdX * r.rt.sx, rh = ir.sdY * r.rt.sx;
-        ok(rw <= sr.sdX + 1 && rh <= sr.sdY + 1, label + host + ": " + where + " item fits its marker (" + Math.round(rw) + "x" + Math.round(rh) + " <= " + Math.round(sr.sdX) + "x" + Math.round(sr.sdY) + ")");
+        ok(rw <= sr.sdX * 1.4 + 1 && rh <= sr.sdY * 1.4 + 1, label + host + ": " + where + " item stays within its slot (" + Math.round(rw) + "x" + Math.round(rh) + " vs marker " + Math.round(sr.sdX) + "x" + Math.round(sr.sdY) + ")");
         ok(E.get(slot).el.style.backgroundImage === "none", label + host + ": " + where + " ghost marker hidden after placement");
+        // THE cross-level rule: this art landed at some size in the first level that dropped it; every
+        // later level must reproduce it. (The bell was 170x177 in L1 but 146x152 in L2 before this.)
+        const sp = (CFG.draggables[it].itemData.droppedSprite || {}).path;
+        if (sp) {
+          const size = Math.round(rw) + "x" + Math.round(rh);
+          const fixedH = H.C.dropSizeFixed()[host + "|" + sp];
+          if (fixedH > 0) {
+            // deliberate exception: this container already shows the same art, so the drop matches THAT
+            ok(Math.abs(rh - fixedH) <= 1, label + host + ": " + where + " item matches the art already in the container (" + Math.round(rh) + " vs " + fixedH + ")");
+          } else if (!landedSize.has(sp)) landedSize.set(sp, { size, host });
+          else {
+            const first = landedSize.get(sp);
+            ok(first.size === size, label + host + ": " + where + " item is the same size as when it first landed in " + first.host + " (" + size + " vs " + first.size + ")");
+          }
+        }
       }
     });
     if (f.isLastLevel) ok(await until(() => E.isActive(nid(f.finalScreen)), 8000), label + host + ": final screen");
@@ -283,6 +413,26 @@ async function runViewport(vp, full) {
   }
   if (full) ok(E.isActive("n515_Final_screen"), label + "Final screen reached");
 
+  // ---- framing must not drift: after the whole flow the stage still carries EXACTLY the fit its
+  // viewport asks for, and every re-fit signal (resize, orientation, a returning tab) re-asserts it. ----
+  {
+    const now = env.stage.getBoundingClientRect();
+    ok(Math.abs(now.width / 1920 - expectS) < 1e-6, label + "stage fit unchanged after the full flow (no framing drift)");
+    const W2 = 1400, H2 = 700, s2 = Math.min(W2 / 1920, H2 / 1080);
+    env.window.innerWidth = W2; env.window.innerHeight = H2;
+    env.window.dispatchEvent(env.makeEvent("resize"));
+    const rs = env.stage.getBoundingClientRect();
+    ok(Math.abs(rs.width / 1920 - s2) < 1e-6, label + "stage refits on resize");
+    ok(Math.abs(rs.left - (W2 - 1920 * s2) / 2) < 1.5 && Math.abs(rs.top - (H2 - 1080 * s2) / 2) < 1.5, label + "stage stays letterbox-centered after resize");
+    // a viewport change with no resize event (mobile address bar / restored tab) must still re-fit
+    const W3 = 1200, H3 = 900, s3 = Math.min(W3 / 1920, H3 / 1080);
+    env.window.innerWidth = W3; env.window.innerHeight = H3;
+    env.document.dispatchEvent(env.makeEvent("visibilitychange"));
+    ok(Math.abs(env.stage.getBoundingClientRect().width / 1920 - s3) < 1e-6, label + "stage refits when the tab becomes visible again (no stale scale)");
+    env.window.innerWidth = vp.width; env.window.innerHeight = vp.height;
+    env.window.dispatchEvent(env.makeEvent("resize"));
+  }
+
   ok(consoleErrors.length === 0, label + "no console errors (" + consoleErrors.slice(0, 2).join(" / ") + ")");
   return H;
 }
@@ -295,6 +445,57 @@ async function runViewport(vp, full) {
     const vp = VIEWPORTS[i];
     console.log("-- " + vp.name + (i === 0 ? " (full 5-level flow)" : " (tutorial pass)"));
     await runViewport(vp, i === 0);
+  }
+
+  // ---- the idle-hint rule, measured at EVERY step of a post-Tutorial level ----
+  // "After the Tutorial, a hand appears only once the child has been idle ~8s." Four separate hint
+  // families implement that (box / Next button / drag ghost / answer hand); this sits still at each
+  // step of Level 1 and times how long a hand actually takes, so no family can drift out of the rule.
+  console.log("-- idle-hint rule: every hand in Level 1");
+  {
+    const IH = boot(VIEWPORTS[0]);
+    const ienv = IH.env, IE = IH.E, ICFG = IH.CFG;
+    const inid = (x) => (x && x.node) ? x.node : null;
+    const iel = (id) => ienv.document.getElementById(id);
+    const iclick = (id) => { const el = iel(id); if (el) el.dispatchEvent(ienv.makeEvent("click")); };
+    const iuntil = async (p, ms, st = 100) => { let t = 0; while (t < ms) { if (p()) return true; await ienv.advance(st); t += st; } return p(); };
+    const izc = (id) => { const r = iel(id).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
+    const idrag = (i, z) => { const c = izc(z); ienv.dragTo(iel(i), c.x, c.y); };
+    const iw = (id) => { const d = ICFG.draggables[id]; return d && d.itemData ? d.itemData.weight : NaN; };
+    const NODES = IE.nodes();
+    const anyHand = () => Object.keys(NODES).some((id) => /hand|hint|ghost/i.test((NODES[id].node.name || "")) && IE.isInteractableInTree(id) && IE.getAlpha(id) > 0.02);
+    const timeToHand = async (maxS) => { const t0 = ienv.vnow(); const got = await iuntil(anyHand, maxS * 1000, 100); return got ? (ienv.vnow() - t0) / 1000 : null; };
+    const inRule = (s, step) => ok(s !== null && s >= 7.5 && s <= 9.5, "idle rule | Level 1 " + step + " hand waits ~8s (" + (s === null ? "never appeared" : s.toFixed(1) + "s") + ")");
+
+    await ienv.advance(50);
+    ienv.window.dispatchEvent(ienv.makeEvent("pointerdown", { clientX: 5, clientY: 5 }));
+    IE.setActive("n105_Level_1", true);                     // straight into a post-Tutorial level
+    const f = ICFG.gameManagers.find((g) => g.host === "n105_Level_1").fields;
+    const ball = inid(f.ballDraggable), book = inid(f.bookDraggable);
+    const zs = Object.keys(ICFG.baskets).filter((z) => inid(ICFG.baskets[z].gameManager) === "n105_Level_1" && !ICFG.baskets[z].isPart4);
+    const L = zs.find((z) => ICFG.baskets[z].isLeftBasket), R = zs.find((z) => !ICFG.baskets[z].isLeftBasket);
+
+    await iuntil(() => (iel(inid(f.boxButton)).listeners.click || []).length > 0, 12000);
+    ok(!anyHand(), "idle rule | Level 1 box is tappable before any hand appears");
+    inRule(await timeToHand(14), "Part 1 box");
+    iclick(inid(f.boxButton));
+    await iuntil(() => IE.isActive(inid(f.nextButtonPart2)), 15000);
+    inRule(await timeToHand(16), "Part 2 Next");
+    iclick(inid(f.nextButtonPart2));
+    await iuntil(() => IE.get(ball)._drag.enabled, 18000);
+    inRule(await timeToHand(14), "Part 3 drag");
+    idrag(ball, R);
+    await iuntil(() => IE.get(book)._drag.enabled, 15000);
+    idrag(book, L);
+    await iuntil(() => (iel(inid(f.bookAnswerButton)).listeners.click || []).length > 0, 18000);
+    inRule(await timeToHand(14), "Part 3 answer");
+    const bl = iw(book) < iw(ball), ci = f.answerMode === 0 ? bl : !bl;
+    iclick(ci ? inid(f.bookAnswerButton) : inid(f.ballAnswerButton));
+    await iuntil(() => IE.isActive(inid(f.nextButtonPart3)), 15000);
+    iclick(inid(f.nextButtonPart3));
+    const p4a = inid(f.bookDraggablePart4);
+    await iuntil(() => IE.get(p4a)._drag.enabled && IH.RB.gmByHost["n105_Level_1"].diagnostics().ready4, 25000);
+    inRule(await timeToHand(14), "Part 4 drag");
   }
 
   // ---- lifecycle / leak stability: replay Tutorial 20x on a fresh boot ----

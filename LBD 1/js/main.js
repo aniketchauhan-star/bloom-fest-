@@ -101,8 +101,22 @@
   var preloaded = {};
   function preloadLevel(hostId) {
     if (!hostId || preloaded[hostId]) return; preloaded[hostId] = true;
-    var run = function () { collectAssets(hostId).forEach(function (src) { var im = new Image(); im.src = src; }); };
+    // E.preloadPaths decodes AND records each sprite's natural size (used by the item seating), and it
+    // de-dupes per src, so calling it for every level costs one fetch per distinct asset.
+    var run = function () { try { E.preloadPaths(collectAssets(hostId)); } catch (e) {} };
     if (window.requestIdleCallback) requestIdleCallback(run, { timeout: 3000 }); else setTimeout(run, 500);
+  }
+  // Warm EVERY level's art during idle time after boot, one level at a time so the first screens win the
+  // bandwidth. The child spends ~30s+ per level, so by the time any level is reached its art is decoded
+  // and nothing has to be fetched at reveal time (each reveal still awaits its own warm as a safety net).
+  function preloadAllLevels(order) {
+    var i = 0;
+    (function next() {
+      if (i >= order.length) return;
+      var host = order[i++];
+      var go = function () { preloadLevel(host); next(); };
+      if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 2500 }); else setTimeout(go, 400);
+    })();
   }
 
   function startLevel(hostId) {
@@ -166,12 +180,53 @@
     if (b) { b.classList.add("hide"); setTimeout(function () { if (b.parentNode) b.parentNode.removeChild(b); }, 500); }
   }
   window.__rbHideBoot = hideBoot;   // let the HTML fallback share the same guard
+  // Sprites that live ONLY in CONFIG, never on a layout node: the open-box art, the correct/wrong
+  // variants, the ghost-demo pictures and the dropped-item art. collectAssets walks nodes, so these 19
+  // were fetched at the instant of the swap — which is why tapping the box hitched as it opened.
+  function allConfigSprites() {
+    var out = [], seen = {};
+    var add = function (p) { if (typeof p === "string" && p && !seen[p]) { seen[p] = 1; out.push(p); } };
+    var walk = function (o, depth) {
+      if (!o || typeof o !== "object" || depth > 5) return;
+      if (o.sprite && typeof o.sprite.path === "string") add(o.sprite.path);
+      if (typeof o.path === "string" && /\.(webp|png|jpe?g)$/i.test(o.path)) add(o.path);
+      Object.keys(o).forEach(function (k) { walk(o[k], depth + 1); });
+    };
+    (CFG.gameManagers || []).forEach(function (g) { walk(g.fields, 0); });
+    Object.keys(CFG.draggables || {}).forEach(function (id) { walk(CFG.draggables[id], 0); });
+    return out;
+  }
+
+  // Every audio clip the game will ever play, so no VO/SFX has to be fetched at the moment it is
+  // needed (AudioManager caches one element per src and de-dupes, and metadata is what typeText needs
+  // to pace the typing to the voice).
+  function allAudioClips() {
+    var out = [], seen = {};
+    var add = function (s) { if (typeof s === "string" && s && !seen[s]) { seen[s] = 1; out.push(s); } };
+    if (bgmSrc) add(bgmSrc);
+    (CFG.gameManagers || []).forEach(function (g) {
+      Object.keys(g.fields || {}).forEach(function (k) {
+        var f = g.fields[k];
+        if (f && typeof f.audio === "string") add(f.audio);
+      });
+    });
+    return out;
+  }
+  function warmAudio() {
+    allAudioClips().forEach(function (src) { try { Audio.prepareNarration(src); } catch (e) {} });
+  }
+
   var fontsReady = (document.fonts && document.fonts.ready) ? document.fonts.ready : Promise.resolve();
-  Promise.all([fontsReady, preloadDecode(introId || "n2_Intro_1")]).then(hideBoot);
+  Promise.all([fontsReady, preloadDecode(introId || "n2_Intro_1")]).then(function () {
+    hideBoot();
+    // Only AFTER the first screen is decoded and shown: warm every level's art and every audio clip,
+    // one level at a time during idle. Nothing competes with the first paint, and by the time any
+    // screen is reached its assets are already decoded — no buffering, no pop-in, no VO delay.
+    preloadAllLevels(LEVEL_ORDER);
+    var warmRest = function () { try { E.preloadPaths(allConfigSprites()); } catch (e) {} warmAudio(); };
+    if (window.requestIdleCallback) requestIdleCallback(warmRest, { timeout: 6000 }); else setTimeout(warmRest, 2000);
+  });
   setTimeout(hideBoot, 5000);       // safety net if an asset stalls
-  var firstLevel = LEVEL_ORDER[0];  // warm the tutorial while the child reads the intro
-  if (window.requestIdleCallback) requestIdleCallback(function () { preloadLevel(firstLevel); }, { timeout: 4000 });
-  else setTimeout(function () { preloadLevel(firstLevel); }, 1200);
 
   // ---- dev diagnostics (never shown in production) ----
   function diagnostics() {

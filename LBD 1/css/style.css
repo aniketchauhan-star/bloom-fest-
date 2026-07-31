@@ -28,13 +28,18 @@ html, body {
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
-/* Fixed logical 1920x1080 stage, scaled uniformly (min ratio) and letterbox-centered by JS. */
+/* Fixed logical 1920x1080 stage, scaled uniformly (min ratio) and letterbox-centered by JS.
+ * NO will-change/backface hack here on purpose. Promoting the stage to a permanently composited layer
+ * makes the browser rasterise the whole 1920x1080 scene ONCE and then GPU-scale that cached texture to
+ * fit the window — so at any non-integer fit (a 1889px-wide window gives 0.98) every sprite and every
+ * glyph is resampled from a stale raster and the screen looks soft. Without it the browser re-rasterises
+ * at the final on-screen scale, which is as sharp as the source art allows. The transform is only
+ * written on resize, so there is nothing here for will-change to optimise anyway. */
 #stage {
   position: absolute;
   top: 0; left: 0;
   width: 1920px; height: 1080px;
   transform-origin: top left;
-  will-change: transform;
 }
 
 .node {
@@ -65,13 +70,14 @@ html, body {
 
 .confetti-p {
   position: fixed;
-  width: 20px; height: 20px;
+  width: 22px; height: 22px;
   pointer-events: none;
   z-index: 9999;
   will-change: transform, opacity;
-  /* 5-point star + layered warm glow so bursts read as magical golden sparkles, not paper confetti */
+  /* 5-point star. The warm glow used to be two drop-shadow filters — two blur passes per particle per
+   * frame, which is what made the box opening and the Part-4 finish stutter. The glow is now baked into
+   * the fill (a radial gradient set per particle in engine.js), so this is paint-only: no blur pass. */
   clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
-  filter: drop-shadow(0 0 6px rgba(255, 214, 90, 1)) drop-shadow(0 0 14px rgba(255, 188, 40, 0.75)) brightness(1.12);
 }
 
 /* first-paint loader */

@@ -58,6 +58,99 @@ var Controllers = (function () {
   var LEFT_DOWN = { beamRot: 8, beamX: -27, beamY: -8.3, leftX: -385, leftY: -27, rightX: 372, rightY: 65, p1X: -237, p1Y: 41 };
   var RIGHT_DOWN = { beamRot: -8, beamX: -29.49, beamY: -2.48, beamW: 792.335, beamH: 839, leftX: -374, leftY: 65, rightX: 377, rightY: -27, p1X: -240.17, p1Y: 20, p2X: 234, p2Y: 27 };
   var DUR = { balanced: 0.35, leftDown: 0.75, rightDown: 0.6666667 };
+  // How deep an item sits in a pan: its visible art bottom is seated this far BELOW the dish's centre
+  // line (the bowl box is 64 logical px tall, centre ±32, and the item draws BEHIND the dish, so the
+  // depth is exactly how much of the item the bowl front laps over).
+  //
+  // Two failure modes, both seen in QA, bound the value:
+  //  - too shallow: the item's bottom ends up ABOVE the bowl and it floats. Items used to be centred
+  //    on the drop point, so the bottom depended on the item's box height — the tall bell/crown/vase
+  //    (box 197) landed at +17..+28 and read as seated, the short ribbon (box 140) at -1..-11 and
+  //    floated. That is the float QA reported.
+  //  - too deep: a fixed depth swallows a short item. At +26 the bowl hid ~40% of the ribbon and cut
+  //    across its flat base, while hiding only ~13% of the bell.
+  // So the lap scales with the item — SEAT_FRACTION of its visible art height, capped at SEAT_DEPTH.
+  // The ribbon gets ~17px and the bell ~24px: both clearly resting in the bowl, neither swallowed.
+  // (The rim's exact line inside the bowl sprite isn't in the data, so these are tuned to what QA
+  //  sees on screen; they are the only two numbers to touch if the tuck needs adjusting.)
+  // SEAT_DEPTH is measured, not taste: the bowl is deep only in its middle (opaque down to y=63 around
+  // its centre, but only y=31..47 toward its ends), so a WIDE item cannot sit as deep as a narrow one —
+  // its outer columns drop past the bowl's silhouette and show under the pan. Comparing each item's
+  // per-column opaque profile against the bowl's, the deepest lap that keeps EVERY item inside the bowl
+  // (with 4px to spare) is 11px; the tightest item is the Tutorial's bell (120px of art). Going deeper
+  // is what made the ribbon's tail, the Tutorial bell and the paper fan poke out below the rim.
+  var SEAT_DEPTH = 11;
+  // How long a child may sit doing nothing before a hand comes out to show them what to do — for every
+  // level AFTER the Tutorial (the Tutorial teaches, so it demonstrates straight away). Covers the
+  // drag-guide hand in Part 3 and Part 4 and the tap hand in the Part-3 answer step.
+  var IDLE_HINT_DELAY = 8;
+  var GHOST_FADE = 0.45;   // how long the drag-guide hand takes to fade up (it must never just blink on)
+  // An item must be the SAME size wherever it lands. Each level authors its own ghost marker and the
+  // item used to be fitted to it, so the identical bell rendered 170x177 in Level 1 but 146x152 in
+  // Level 2 (its marker is 146 wide) — the same object visibly shrinking between levels. The FIRST
+  // level to drop a given piece of art records the size it landed at; every later level matches it.
+  // Keyed by the dropped SPRITE, so the rule follows the art rather than the level.
+  var DROP_SIZE = {};   // dropped-sprite path -> rendered box height in logical px
+  // ...with one exception per container that already displays the same art. Level 2's wagon carries an
+  // authored bell decoration (n281_Bell_1, 146x197) right next to where the child drops the bell, so the
+  // dropped one must match THAT rather than the size Level 1 recorded — otherwise the same wagon shows
+  // two bells at different sizes. Keyed "host|sprite" -> rendered box height; 197 makes the art land at
+  // its native 146x197, pixel-for-pixel identical to the decoration beside it.
+  var DROP_SIZE_FIXED = {
+    "n206_Level_2|assets/img/Untitled_design__34__2.webp": 197
+  };
+  // How deep each individual art can tuck, measured the same way: a narrow-based item can sit much
+  // deeper than a wide-based one before its outer columns fall past the bowl. Values are the measured
+  // maximum minus a safety margin. Anything not listed uses SEAT_DEPTH, which is safe for every item.
+  // Every item's own maximum, measured per sprite AFTER its art is centred by ART_NUDGE below (centring
+  // matters: several arts are drawn off-centre in their file, which pushed their edge onto the bowl's
+  // shallow end and forced a shallow seat). Each value is at or under the deepest clean depth found.
+  var ART_SEAT = {
+    "assets/img/Untitled_design__34__2.webp": 24,   // bell (Levels 1 + 2) — clean to 34
+    "assets/img/Untitled_design__21__7.webp": 18,   // bell (Tutorial)     — clean to 19
+    "assets/img/paper_fan.webp": 22,                // paper fan (Level 2) — clean to 24
+    "assets/img/vase.webp": 22,                     // vase (Level 4)      — clean to 24
+    "assets/img/Untitled_design__33__6.webp": 16,   // paper fan (Tutorial)— clean to 17
+    "assets/img/crown.webp": 16,                    // crown (Level 3)     — clean to 16
+    "assets/img/flowers.webp": 16,                  // flowers (Level 4)   — clean to 16
+    "assets/img/The_Royal_Bloom_Fest__26__2.webp": 15 // ribbon (L1 + L3)  — clean to 15 (its tail is the limit)
+  };
+  function seatDepthFor(imgId) {
+    var r = imgId && Engine.get(imgId);
+    var p = r && r._img && r._img.sprite && r._img.sprite.path;
+    return (p && ART_SEAT[p]) || SEAT_DEPTH;
+  }
+  // Per-SPRITE seating nudge in logical px, applied on top of the geometric seating. The engine knows
+  // a sprite's box and its aspect, but NOT where the opaque pixels sit inside the file — art that is
+  // drawn off-centre in its own image therefore lands off-centre in the pan, however exactly we place
+  // the box. Keyed by sprite path, so one entry fixes every level that uses that art (the ribbon is
+  // shared by Level 1 and Level 3) and Part 3 + Part 4 alike. dx: -left/+right, dy: +deeper.
+  // Measured from the art itself (per-column opaque profile of the sprite vs the pan's bowl sprite):
+  //  - the ribbon's opaque pixels sit 12px RIGHT of its own box centre, so centring the box leaves the
+  //    ribbon off-centre on the pan;
+  //  - its lowest pixels are its TAIL, which spans the whole right half of the frame. The bowl is only
+  //    deep in the middle (opaque to y=63 at x 64..139, but just y=39 by x=172), so a tail sitting at
+  //    the bowl's right end drops below the bowl's silhouette and shows under the pan — 10px of it at
+  //    the previous setting, which is exactly what QA photographed.
+  //  dx -20 both centres the visible ribbon (+12 of it) and slides its tail back over the bowl's deep
+  //  middle (-8). Verified against the silhouettes: no column of the ribbon falls outside the bowl.
+  // dx is each art's measured off-centre error inside its own image file (plus, for the ribbon and the
+  // Tutorial bell, a couple of px more to bring a low outer edge over the bowl's deeper middle).
+  var ART_NUDGE = {
+    "assets/img/The_Royal_Bloom_Fest__26__2.webp": { dx: -14, dy: 0 },  // ribbon (L1 + L3): art 12px right in file
+    "assets/img/flowers.webp": { dx: -19, dy: 0 },                      // flowers (L4): art 19px right in file
+    "assets/img/paper_fan.webp": { dx: -15, dy: 0 },                    // paper fan (L2): art 15px right in file
+    "assets/img/vase.webp": { dx: -7, dy: 0 },                          // vase (L4)
+    "assets/img/crown.webp": { dx: -3, dy: 0 },                         // crown (L3)
+    "assets/img/Untitled_design__21__7.webp": { dx: -2, dy: 0 },        // bell (Tutorial)
+    "assets/img/Untitled_design__34__2.webp": { dx: 1, dy: 0 },         // bell (L1 + L2)
+    "assets/img/Untitled_design__33__6.webp": { dx: 5, dy: 0 }          // paper fan (Tutorial): art 5px left in file
+  };
+  function artNudge(imgId) {
+    var r = imgId && Engine.get(imgId);
+    var p = r && r._img && r._img.sprite && r._img.sprite.path;
+    return (p && ART_NUDGE[p]) || { dx: 0, dy: 0 };
+  }
 
   function BalanceScaleAnimator(cfg) {
     var rootId = cfg.rootId || nid(cfg.animator);
@@ -189,6 +282,9 @@ var Controllers = (function () {
     var AUD = {};
     for (var k = 1; k <= 8; k++) AUD[k] = aud(f["instruction" + k + "Audio"]);
     var featherLantern = aud(f.featherLanternAudio), wrongSFX = aud(f.wrongSFX), boxOpenSFX = aud(f.boxOpenSFX), finalAudio = aud(f.finalScreenAudio);
+    // Sound for an item landing in the basket / wagon (Part 4). Data-driven, falling back to the
+    // level's sparkle clip so every level has one without hard-coding a path here.
+    var dropSFX = aud(f.dropSFX) || boxOpenSFX;
     var INSTR = {}; for (var j = 1; j <= 8; j++) INSTR[j] = str(f["instruction" + j], "");
     var answerMode = num(f.answerMode, 0);
     var isFirstLevel = bool(f.isFirstLevel), isLastLevel = bool(f.isLastLevel);
@@ -217,17 +313,67 @@ var Controllers = (function () {
     var isPart4Ready = false, part3AnswerSelected = false;
     var ghostToken = { alive: false };
     var confettiToken = { cancelled: false };
-    var answerHintTimer = null, part4HintTimer = null, nextHintTimer = null;
+    var answerHintTimer = null, part4HintTimer = null, nextHintTimer = null, boxHintTimer = null;
     var disposers = [];           // click-listener disposers for this level
     var locks = {};               // transition locks
     var boxOpened = false;
+    var tryAgainScale = null;     // authored resting scale of the Try Again button (captured once)
 
     function A(id, on) { if (id) E.setActive(id, on); }
+    // Force every hint hand / ghost of THIS level off, killing any tween on it. Used at level start
+    // (the layout authors some of them active) and on teardown, so no hand can be left on screen.
+    function hideAllHints() {
+      [ID.hintHand, ID.hint1, ID.hint2, ID.answerHint, ID.nextHint, ID.ghostHand, ID.ghostItem, ID.p4hint1, ID.p4hint2]
+        .forEach(function (id) { if (id) { E.kill(id); E.setActive(id, false); } });
+    }
     function reg(disposer) { if (disposer) disposers.push(disposer); }
     function weight(id) { var d = E.get(id); return d && d._itemData ? d._itemData.weight : 0; }
 
+    // ---- art warming (never reveal a container before the thing inside it) ----
+    // Level art paints lazily, so activating a card starts the sprite fetch — the card would show
+    // empty for a beat on a first visit. Warm the subtree's sprites first; resolves immediately once
+    // they are cached, and is capped inside the engine so a missing asset cannot stall the flow.
+    function warmArt(ids) { try { return E.preloadSprites(ids); } catch (e) { return Promise.resolve(); } }
+    // every sprite this level's draggables can show (item + dropped), so Part 3 / Part 4 reveals and
+    // the seating maths (which needs each sprite's natural size) are never waiting on a fetch
+    function itemSpritePaths() {
+      var out = [];
+      [ID.book, ID.ball, ID.part4ItemA, ID.part4ItemB].forEach(function (id) {
+        var r = id && E.get(id), d = r && r._itemData; if (!d) return;
+        if (d.itemSprite && d.itemSprite.path) out.push(d.itemSprite.path);
+        if (d.droppedSprite && d.droppedSprite.path) out.push(d.droppedSprite.path);
+      });
+      return out;
+    }
+
+    // ---- seating: rest an item INSIDE a pan / basket / wagon ----
+    // Items differ a lot in box height (e.g. the ribbon's box is 140 tall, the bell's 197), so
+    // centring every item on the same drop point left the SHORT ones hanging in mid-air above the
+    // bowl while tall ones reached in. Seat by the BOTTOM of the visible art instead: every item's
+    // art bottom lands on the same line inside the container, whatever its size or aspect.
+    // Placement is measure-and-correct (nudge in anchored space), so it is exact regardless of
+    // pivots or parent scaling.
+    function seatArtBottom(itemId, targetX, bottomY) {
+      var rec = E.get(itemId); if (!rec) return;
+      var imgId = rec._imgId && E.get(rec._imgId) ? rec._imgId : itemId;
+      var nudge = artNudge(imgId);          // correction for art that isn't centred in its own file
+      targetX += nudge.dx; bottomY += nudge.dy;
+      for (var pass = 0; pass < 2; pass++) {
+        var art = E.artRectLogical(imgId) || E.worldRectLogical(imgId);
+        if (!art) return;
+        var dx = targetX - (art.x + art.w / 2), dy = bottomY - (art.y + art.h);
+        if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
+        var p = E.getAnchoredPos(itemId);
+        E.setAnchoredPos(itemId, p.x + dx, p.y - dy);      // anchored Y is up-positive
+      }
+    }
+
     // -------- typing + narration (begin together, single narration) --------
-    function typeText(msg, clip) {
+    // opts.onStart fires on the frame the FIRST letter is painted (which is not when typeText is called:
+    // the typing waits for the clip's metadata so it can be paced to the voice). Anything that should
+    // appear "with the text" must hang off this, not off the returned promise — that resolves only when
+    // the whole line, and therefore the voice, has finished.
+    function typeText(msg, clip, opts) {
       return new Promise(function (resolve) {
         if (!ID.instructionText) return resolve();
         var myTok = ++typingToken;
@@ -236,7 +382,15 @@ var Controllers = (function () {
         var start = function (letterDelay) {
           if (S.cancelled() || myTok !== typingToken) return resolve();
           announce(msg);
-          if (clip) Audio.startNarration(clip);
+          // Type from the moment the voice is REALLY audible, not from the moment play() was called:
+          // if the clip needed a beat to start, the letters used to run ahead of the words. The gate
+          // inside AudioManager is capped, so a blocked/silent clip can never hold the text back.
+          if (clip) { Audio.startNarration(clip, function () { typeFrom(letterDelay); }); return; }
+          typeFrom(letterDelay);
+        };
+        var typeFrom = function (letterDelay) {
+          if (S.cancelled() || myTok !== typingToken) return resolve();
+          if (opts && opts.onStart) { try { opts.onStart(); } catch (e) { console.error(e); } }
           var i = 0;
           (function step() {
             if (S.cancelled() || myTok !== typingToken) return resolve();
@@ -260,12 +414,23 @@ var Controllers = (function () {
       // the letters across it (text finishes exactly when the voice does). Without this, a cold clip can
       // miss the 1.5s prepare window and the text falls back to a fixed speed -> out of sync with the VO.
       Object.keys(AUD).forEach(function (k) { if (AUD[k]) Audio.prepareNarration(AUD[k]); });
+      // Warm every sprite this level's items can show (item + dropped, Part 3 + Part 4) as soon as the
+      // level mounts. Each reveal awaits its own warm too; doing it here means those awaits are usually
+      // already satisfied, and the natural sizes the seating maths needs are known before the first drop.
+      warmArt([ID.item1, ID.item2, ID.item3, ID.item4]);
+      try { E.preloadPaths(itemSpritePaths()); } catch (e) {}
       if (scaleCtrl && scaleCtrl.reset) scaleCtrl.reset(true);   // snap scale to balanced (no drift on re-entry)
       // reset this level's draggables to their original slots + sprites (clean re-entry)
       [ID.book, ID.ball, ID.part4ItemA, ID.part4ItemB].forEach(function (did) { if (did) { I.resetToInitial(did); repaintItem(did, "item"); } });
       item1Orig = ID.item1 ? E.getAnchoredPos(ID.item1) : { x: 0, y: 0 };
       item2Orig = ID.item2 ? E.getAnchoredPos(ID.item2) : { x: 0, y: 0 };
-      A(ID.item1, false); A(ID.item2, false); A(ID.highlight, false); A(ID.hintHand, false);
+      A(ID.item1, false); A(ID.item2, false); A(ID.highlight, false);
+      // Every hint hand / ghost starts HIDDEN, whatever the layout authored. The Unity export is
+      // inconsistent here — Level 1 authors its two Part-3 hint hands ACTIVE (n157/n163) and Level 3
+      // authors the children of its Part-4 hint hands ACTIVE — so a stray hand would sit on screen
+      // from the moment that part appears instead of only after the child has idled. Hiding them per
+      // level (not per node id) keeps this true for any future level.
+      hideAllHints();
       A(ID.part2, false); A(ID.part3, false); A(ID.part4, false);
       A(ID.item3, false); A(ID.item4, false); A(ID.lanternText, false); A(ID.featherText, false);
       A(ID.nextP2, false); A(ID.nextP3, false); A(ID.tryAgain, false);
@@ -290,12 +455,21 @@ var Controllers = (function () {
     async function part1Flow() {
       await typeText(INSTR[1], AUD[1]);
       await S.wait(1);
-      showHint();
+      // The box becomes tappable as soon as the instruction lands — only the HINT waits. (These two used
+      // to be one step, which is why the box hand still appeared right away after the Tutorial: the 8s
+      // idle rule had only been applied to the drag hand and the answer hand, not to this one.)
+      if (ID.boxButton) reg(E.onClick(ID.boxButton, guard("box", openBox), { key: "gm" }));
+      boxHintTimer = S.setTimeout(showHint, (isFirstLevel ? 0 : IDLE_HINT_DELAY) * 1000);
     }
     function showHint() {
+      boxHintTimer = null;
+      if (boxOpened || !ID.hintHand) return;      // the child got there first — no hand needed
       A(ID.hintHand, true);
-      if (ID.hintHand) { E.setScale(ID.hintHand, 0.7); var p = E.getAnchoredPos(ID.hintHand); S.track(ID.hintHand); E.doAnchorPosY(ID.hintHand, p.y - 15, 0.5, "Linear", { loops: -1, yoyo: true }); }
-      if (ID.boxButton) reg(E.onClick(ID.boxButton, guard("box", openBox), { key: "gm" }));
+      S.track(ID.hintHand);
+      E.setAlpha(ID.hintHand, 0); E.doFade(ID.hintHand, 1, GHOST_FADE, "OutQuad");   // fade up, never blink on
+      E.setScale(ID.hintHand, 0.7);
+      var p = E.getAnchoredPos(ID.hintHand);
+      E.doAnchorPosY(ID.hintHand, p.y - 15, 0.5, "Linear", { loops: -1, yoyo: true });
     }
     function openBox() {
       if (boxOpened) return; boxOpened = true;
@@ -303,6 +477,7 @@ var Controllers = (function () {
       // stay fully opaque as it wobbles + opens.
       if (ID.boxButton) E.setInputEnabled(ID.boxButton, false);
       A(ID.messageBar, false);
+      if (boxHintTimer) { S.clearTimeout(boxHintTimer); boxHintTimer = null; }   // tapped in time: no hand
       if (ID.hintHand) { E.kill(ID.hintHand); A(ID.hintHand, false); }
       if (boxOpenSFX) Audio.playSFX(boxOpenSFX);
       // Tap wobble: rock the CLOSED box as a RIGID unit — the front box AND its lid (cap) together —
@@ -343,11 +518,13 @@ var Controllers = (function () {
       else afterBoxOpen();
     }
     async function afterBoxOpen() {
-      await S.wait(0.5); popItems();
+      await S.wait(0.5); await popItems();
       await S.wait(0.5); popHighlight();
       await S.wait(2); startPart2();
     }
-    function popItems() {
+    async function popItems() {
+      await warmArt([ID.item1, ID.item2]);            // items pop out already drawn, never as empty shapes
+      if (S.cancelled()) return;
       A(ID.item1, true); A(ID.item2, true);
       if (ID.item1) { S.track(ID.item1); E.setAnchoredPos(ID.item1, item1Orig.x, item1Orig.y - 100); E.setScale(ID.item1, 0); E.doAnchorPos(ID.item1, item1Orig.x, item1Orig.y, 0.5, "OutBack"); E.doScale(ID.item1, 1, 0.5, "OutBack"); }
       if (ID.item2) { S.track(ID.item2); E.setAnchoredPos(ID.item2, item2Orig.x, item2Orig.y - 100); E.setScale(ID.item2, 0); E.doAnchorPos(ID.item2, item2Orig.x, item2Orig.y, 0.5, "OutBack"); E.doScale(ID.item2, 1, 0.5, "OutBack"); }
@@ -364,6 +541,9 @@ var Controllers = (function () {
     async function startPart2() {
       A(ID.part1, false); A(ID.part2, true);
       await S.wait(0.1);
+      // the card and the item inside it must appear together — warm the art before revealing either
+      await warmArt([ID.item3, ID.item4, ID.lanternText, ID.featherText]);
+      if (S.cancelled()) return;
       A(ID.item3, true); A(ID.item4, true);
       if (ID.item3) { S.track(ID.item3); E.setScale(ID.item3, 0); E.doScale(ID.item3, 1, 0.5, "OutBack"); }
       if (ID.item4) { S.track(ID.item4); E.setScale(ID.item4, 0); E.doScale(ID.item4, 1, 0.5, "OutBack"); }
@@ -391,7 +571,9 @@ var Controllers = (function () {
       // UNFURL like a real scroll: start as a thin, tall rolled-up strip and unroll WIDE (scaleX grows
       // from a sliver to full while the height barely settles). Scaling the whole root keeps every piece
       // (parchment, both rollers, name) locked together — never detached — and .node scales from its
-      // centre so it opens outward symmetrically. Name pops + sparkles once it's open.
+      // centre so it opens outward symmetrically. The name pops in once it is open — deliberately with
+      // NO sparkle burst: on the naming screen the word is what the child should be reading, and the
+      // stars pulled the eye off it. Bursts stay on the box opening, the Part-4 drops and the finale.
       S.track(rootId);
       E.setScaleXY(rootId, 0.06, 0.9);
       E.tween({ dur: dur, ease: "OutBack", tag: rootId,
@@ -400,14 +582,16 @@ var Controllers = (function () {
           if (S.cancelled()) return;
           E.setScaleXY(rootId, 1, 1);
           if (txt) { A(txt, true); S.track(txt); E.setAlpha(txt, 0); E.setScale(txt, 0.55); E.doScale(txt, 1, 0.35, "OutBack"); E.doFade(txt, 1, 0.3, "OutQuad"); }
-          confettiToken = { cancelled: false }; E.confettiBurst(rootId, confettiToken);   // golden sparkle
         } });
     }
 
     // ---------- PART 3 ----------
-    function startPart3() {
+    function startPart3() { revealPart3(); }
+    async function revealPart3() {
       if (scaleCtrl) scaleCtrl.reset();
       A(ID.nextP2, false); stopNextButtonHint(); Audio.stopNarration();
+      await warmArt([ID.part3]);            // genie, pans and both item cards drawn before they slide in
+      if (S.cancelled()) return;
       A(ID.part3, true);
       if (ID.part3) {
         var p3 = E.getAnchoredPos(ID.part3); S.track(ID.part3);
@@ -441,13 +625,20 @@ var Controllers = (function () {
       // lower edge and it reads as seated INSIDE the pan. Full size (scale 1) as before; it rides the
       // pan when the beam tilts because it is now a child of the pan.
       E.setScale(itemId, 1); E.setRotation(itemId, 0);
+      repaintItem(itemId, "dropped");     // swap to the sprite it will SHOW before measuring it (aspects differ)
       var zoneRec = E.get(zone.id), dish = zoneRec && zoneRec.parent, pan = dish && dish.parent;
       if (pan) {
         var sc = E.centerLogical(zone.id);
         E.reparent(itemId, pan.id);
-        // seat the item a touch HIGHER than the raw zone centre so its lower art tucks fully inside the
-        // bowl instead of poking under the front rim (the drop spot sits low in the dish).
-        E.setStageLocalPos(E.get(itemId), sc.x, sc.y - 14);
+        E.setStageLocalPos(E.get(itemId), sc.x, sc.y);
+        // Rest the item ON the bowl: its visible art bottom sits just below the dish's centre line, so
+        // the dish front laps over the item's lower edge. The depth is keyed to the DISH (not the item's
+        // box height, which is what let short items float) and to the ART (each sprite tucks as deep as
+        // its own silhouette allows against the bowl) — see seatDepthFor / ART_SEAT.
+        var dc = E.centerLogical(dish.id);
+        var itemRec = E.get(itemId);
+        var seatImg = (itemRec._imgId && E.get(itemRec._imgId)) ? itemRec._imgId : itemId;
+        seatArtBottom(itemId, dc.x, dc.y + seatDepthFor(seatImg));
         E.setAsFirstSibling(itemId);   // render BEHIND the dish -> tucked inside the bowl
         // The dish (bowl) now sits IN FRONT of the nestled item. In the answer phase the item is the
         // tap target ("Tap the heavier item"), so make the dish + its drop-marker children NON-
@@ -457,7 +648,6 @@ var Controllers = (function () {
       } else {
         E.reparent(itemId, zone.id); E.setAnchoredPos(itemId, 0, 0); E.setAsLastSibling(itemId);
       }
-      repaintItem(itemId, "dropped");
     }
     function repaintItem(itemId, which) {
       var r = E.get(itemId); if (!r || !r._itemData) return;
@@ -479,9 +669,9 @@ var Controllers = (function () {
       I.setEnabled(ID.ball, true); I.setEnabled(ID.book, false);
       startGhost(ID.ballStart, ID.rightDrop, false);
       onDragStarted(ID.ball, stopGhost);
-      var rightHint = scheduleHint(ID.hint1, function () { return !!placed3[ID.ball]; });
+      hideHint(ID.hint1);                 // no sticky hand overlay — the animated ghost hand is the only hint
       await S.waitUntil(function () { return !!placed3[ID.ball]; });
-      stopGhost(); updateScaleWeights(); clearHint(rightHint, ID.hint1);
+      stopGhost(); updateScaleWeights(); hideHint(ID.hint1);
       I.setEnabled(ID.ball, false);
       await typeText(INSTR[4], AUD[4]);
       // enable book (item on the left) only
@@ -491,9 +681,9 @@ var Controllers = (function () {
       var targetDrop = isLeftOccupied() ? ID.rightDrop : ID.leftDrop;
       startGhost(ID.bookStart, targetDrop, true);
       onDragStarted(ID.book, stopGhost);
-      var leftHint = scheduleHint(ID.hint2, function () { return !!placed3[ID.book]; });
+      hideHint(ID.hint2);
       await S.waitUntil(function () { return !!placed3[ID.book]; });
-      stopGhost(); updateScaleWeights(); clearHint(leftHint, ID.hint2);
+      stopGhost(); updateScaleWeights(); hideHint(ID.hint2);
       I.setEnabled(ID.book, false);
       await S.wait(1);
       A(ID.item5, false); A(ID.item6, false);
@@ -528,7 +718,8 @@ var Controllers = (function () {
         if (part3AnswerSelected) return;
         var cb = correctIsBook();
         showHintOnButton(cb == null ? ID.bookAns : (cb ? ID.bookAns : ID.ballAns));
-      }, answerHintDelay * 1000);
+        // same idle rule as the drag hand: the Tutorial helps quickly, later levels wait 8s of no input
+      }, (isFirstLevel ? answerHintDelay : IDLE_HINT_DELAY) * 1000);
     }
     function showHintOnButton(btnId) {
       if (!ID.answerHint || !btnId) return;
@@ -570,14 +761,28 @@ var Controllers = (function () {
     async function wrongAnswerFlow(selectedBook) {
       if (selectedBook) { showGlow(ID.bookImg, false); dimItem(ID.ballImg, true); }
       else { showGlow(ID.ballImg, false); dimItem(ID.bookImg, true); }
-      await typeText(INSTR[6], AUD[6]);
-      await S.wait(1);
-      A(ID.tryAgain, true); if (ID.tryAgain) reg(E.onClick(ID.tryAgain, guard2("tryagain", onTryAgain), { key: "tryagain" }));
+      // The retry appears WITH the "Oops!" text, not when the line (and the voice it is paced to) has
+      // finished — awaiting typeText used to hold it back for the whole clip. onStart fires on the frame
+      // the first letter is painted, so the button lands with the words while the voice is still talking.
+      var retryShown = false;
+      var showRetry = function () {
+        if (retryShown || S.cancelled()) return; retryShown = true;
+        A(ID.tryAgain, true);
+        if (!ID.tryAgain) return;
+        reg(E.onClick(ID.tryAgain, guard2("tryagain", onTryAgain), { key: "tryagain" }));
+        // resting scale is captured ONCE (from the authored value) — reading it back each time would
+        // compound if the child pressed mid-pop, shrinking the button a little on every retry
+        if (tryAgainScale == null) tryAgainScale = E.getScale(ID.tryAgain) || 1;
+        E.kill(ID.tryAgain); S.track(ID.tryAgain);
+        E.setScale(ID.tryAgain, 0); E.doScale(ID.tryAgain, tryAgainScale, 0.3, "OutBack");   // pop in: "press me"
+      };
+      typeText(INSTR[6], AUD[6], { onStart: function () { S.setTimeout(showRetry, 150); } });
     }
     // guard2: lock resets when the guarded flow explicitly releases it
     function guard2(name, fn) { return function () { if (locks[name]) return; locks[name] = true; fn(function () { locks[name] = false; }); }; }
     function onTryAgain(release) {
       A(ID.tryAgain, false);
+      if (ID.tryAgain) { E.kill(ID.tryAgain); if (tryAgainScale != null) E.setScale(ID.tryAgain, tryAgainScale); }   // settle the pop
       clearGlow(ID.bookImg); clearGlow(ID.ballImg);                   // remove glow + settle the pop
       dimItem(ID.bookImg, false); dimItem(ID.ballImg, false);         // restore the dimmed item to full
       repaintItem(ID.book, "dropped"); repaintItem(ID.ball, "dropped");
@@ -635,6 +840,9 @@ var Controllers = (function () {
         if (marker) E.setSelfPaint(marker, false);
       });
       await S.wait(0.3);
+      // basket, wagon and both sorting cards drawn before any of them is revealed
+      await warmArt([ID.base3, ID.base4, ID.part4ItemA, ID.part4ItemB, ID.basket, ID.trolley]);
+      if (S.cancelled()) return;
       A(ID.base3, true); A(ID.base4, true);
       if (ID.base3) { S.track(ID.base3); E.setScale(ID.base3, 0); E.doScale(ID.base3, 1, 0.5, "OutBack"); }
       if (ID.base4) { S.track(ID.base4); E.setScale(ID.base4, 0); E.doScale(ID.base4, 1, 0.5, "OutBack"); }
@@ -649,7 +857,7 @@ var Controllers = (function () {
       startBasketFloating();
       await typing; await S.wait(2);
       enablePart4Drag(); isPart4Ready = true;
-      part4HintTimer = schedulePart4Hint();
+      stopPart4Hint();                    // keep the static hand-on-card overlays off (ghost hand is the hint)
     }
     function startBasketFloating() { if (!ID.basket) return; E.kill(ID.basket); S.track(ID.basket); var p = E.getAnchoredPos(ID.basket); E.doAnchorPosY(ID.basket, p.y + 12, 1.2, "InOutSine", { loops: -1, yoyo: true }); }
     function enablePart4Drag() {
@@ -692,18 +900,40 @@ var Controllers = (function () {
           var placeLayer = (slotRec && slotRec.parent) ? slotRec.parent.id : (zone.spec.isBasket ? ID.basket : ID.trolley);
           E.reparent(itemId, (E.get(placeLayer) ? placeLayer : zone.id));
           E.setRotation(itemId, 0); E.setAsLastSibling(itemId);
+          repaintItem(itemId, "dropped");   // swap sprites BEFORE measuring — the dropped art has its own aspect
           if (slotRec) {
             var sr = E.getRect(slot), ir = E.getRect(itemId);
             var fit = (sr && ir && ir.sdX > 0 && ir.sdY > 0) ? Math.min(sr.sdX / ir.sdX, sr.sdY / ir.sdY) : 0.82;
-            E.setScale(itemId, (isFinite(fit) && fit > 0) ? fit : 0.82);   // match the ghost marker's box
+            E.setScale(itemId, (isFinite(fit) && fit > 0) ? fit : 0.82);   // start from the ghost marker's box
+            // ...then make it the size this art was the FIRST time it landed, so an item never changes
+            // size between levels just because that level's marker is authored differently (DROP_SIZE).
+            var recI = E.get(itemId);
+            var dsp = recI._itemData && recI._itemData.droppedSprite && recI._itemData.droppedSprite.path;
+            var fixedH = dsp ? DROP_SIZE_FIXED[host + "|" + dsp] : null;
+            if (fixedH > 0 && recI.rt.sdY > 0) {
+              E.setScale(itemId, fixedH / recI.rt.sdY);      // match the art already in this container
+            } else if (dsp) {
+              var renderedH = recI.rt.sdY * recI.rt.sx;
+              if (DROP_SIZE[dsp] == null) { if (renderedH > 0) DROP_SIZE[dsp] = renderedH; }
+              else if (renderedH > 0) {
+                // clamped: matching the first level must never blow an item far past its slot
+                var k = Math.max(0.6, Math.min(1.4, DROP_SIZE[dsp] / renderedH));
+                E.setScale(itemId, recI.rt.sx * k);
+              }
+            }
             var sc = E.centerLogical(slot); E.setStageLocalPos(E.get(itemId), sc.x, sc.y);
+            // then settle it DOWN onto the container: the visible art's bottom lines up with the
+            // marker's bottom, so a short/wide item rests in the basket instead of hovering in it
+            var mr = E.worldRectLogical(slot);
+            if (mr) seatArtBottom(itemId, sc.x, mr.y + mr.h);
             E.setSelfPaint(slot, false);                                    // hide the ghost now the real item covers it
           } else { E.setScale(itemId, 0.82); E.setAnchoredPos(itemId, 0, 0); }
-          repaintItem(itemId, "dropped");
           stopPart4Hint();
-          confettiToken = { cancelled: false }; E.confettiBurst(zone.id, confettiToken);   // golden sparkle from inside the container
+          // No sparkle for an individual drop — the celebration is saved for FINISHING the stage
+          // (checkPart4Completion bursts from both containers). A landing sound still marks each drop.
+          if (dropSFX) Audio.playSFX(dropSFX);
           checkPart4Completion();
-          if (!allPlaced4()) { part4HintTimer = schedulePart4Hint(); startSmartGhostP4(); }
+          if (!allPlaced4()) startSmartGhostP4();
         } else {
           part4WrongFlow(itemId);
         }
@@ -818,15 +1048,8 @@ var Controllers = (function () {
       // A was always the lighter one — item-based keeps the demoed picture correct regardless.
       startGhost(startId || itemId, endId, isItemA, true);
     }
-    function schedulePart4Hint() {
-      return S.setTimeout(function () {
-        part4HintTimer = null;
-        if (allPlaced4()) return;
-        hideHint(ID.p4hint1); hideHint(ID.p4hint2);
-        if (!placed4[ID.part4ItemA]) showFadeHint(ID.p4hint1);
-        else showFadeHint(ID.p4hint2);
-      }, part4HintDelay * 1000);
-    }
+    // Part 4's idle hint is the animated ghost hand (startSmartGhostP4) alone — the static hand-on-the-
+    // card overlay and its dotted arrow are not shown at all, so the child never sees two hands at once.
     function stopPart4Hint() { if (part4HintTimer) { S.clearTimeout(part4HintTimer); part4HintTimer = null; } hideHint(ID.p4hint1); hideHint(ID.p4hint2); }
 
     // ---------- ghost demo ----------
@@ -834,7 +1057,11 @@ var Controllers = (function () {
     function startGhost(startId, endId, isBook, isPart4) {
       stopGhost();
       if (!ID.ghostHand || !ID.ghostItem || !startId || !endId) return;
-      var delay = isPart4 ? ghostDelayPart4 : (isFirstLevel ? 1 : 12);
+      // The Tutorial is the teaching level: it demonstrates the drag almost immediately (and Part 4 on
+      // its authored delay). After the Tutorial the child is expected to try it themselves, so the hand
+      // only comes out once they have been IDLE for IDLE_HINT_DELAY. Any drag stops it (onDragStarted ->
+      // stopGhost) and the next unfinished step re-arms it, so the wait restarts after each interaction.
+      var delay = isFirstLevel ? (isPart4 ? ghostDelayPart4 : 1) : IDLE_HINT_DELAY;
       ghostToken = { alive: true };
       var tok = ghostToken;
       S.setTimeout(function () {
@@ -842,7 +1069,10 @@ var Controllers = (function () {
         var sprite = isPart4 ? (isBook ? SPR.bookGhost4 : SPR.ballGhost4) : (isBook ? SPR.bookGhost3 : SPR.ballGhost3);
         if (ID.ghostImg && sprite) E.repaintSprite(E.get(ID.ghostImg), sprite);
         A(ID.ghostHand, true); A(ID.ghostItem, true);
-        E.setAlpha(ID.ghostItem, ghostAlpha);
+        // Start invisible: the hand used to blink in at full opacity, which after the Tutorial (where
+        // it now waits 8s of silence) reads as something appearing out of nowhere. It fades up on the
+        // spot instead — see the fade below, once it has been positioned at the start of the drag.
+        E.setAlpha(ID.ghostHand, 0); E.setAlpha(ID.ghostItem, 0);
         // The ghost is authored inside Part 3, whose subtree is hidden during Part 4 — so the Part-4
         // demo hand would never render. Re-host both on the LEVEL ROOT (visible in every part). Position
         // is set in stage coords below, so the parent doesn't shift placement.
@@ -855,6 +1085,10 @@ var Controllers = (function () {
         var s = E.centerLogical(startId), e = E.centerLogical(endId);
         var mid = { x: (s.x + e.x) / 2, y: (s.y + e.y) / 2 - 15 };
         E.setStageLocalPos(E.get(ID.ghostHand), s.x, s.y); E.setStageLocalPos(E.get(ID.ghostItem), s.x, s.y);
+        // ease it in where the drag begins, then start the demo — no pop
+        S.track(ID.ghostHand); S.track(ID.ghostItem);
+        E.doFade(ID.ghostHand, 1, GHOST_FADE, "OutQuad");
+        E.doFade(ID.ghostItem, ghostAlpha, GHOST_FADE, "OutQuad");
         loopGhost(s, mid, e, tok);
       }, delay * 1000);
     }
@@ -876,17 +1110,27 @@ var Controllers = (function () {
     }
 
     // ---------- hints ----------
-    function scheduleHint(hintId, doneFn) { return S.setTimeout(function () { if (!doneFn()) showFadeHint(hintId); }, dragHintDelay * 1000); }
-    function clearHint(timer, hintId) { if (timer) S.clearTimeout(timer); if (hintId) { E.kill(hintId); A(hintId, false); } }
-    function showFadeHint(hintId) { if (!hintId) return; E.kill(hintId); A(hintId, true); S.track(hintId); E.setAlpha(hintId, 0.3); E.doFade(hintId, 1, 0.8, "InOutSine", { loops: -1, yoyo: true }); }
+    // The STATIC hint overlays (a faded hand pinned on the item card, plus the big dotted arrow art
+    // behind it) are gone: they appeared alongside the animated drag-guide hand, so the child saw TWO
+    // hands and a dotted arrow at once. The single animated ghost hand (startGhost) is the only drag
+    // hint now. hideHint stays — the flow uses it to guarantee those nodes are never on screen.
     function hideHint(hintId) { if (!hintId) return; E.kill(hintId); A(hintId, false); }
     function showNextButtonHint(btnId) {
       nextHintTimer = S.setTimeout(function () {
-        if (!btnId || !E.isActive(btnId) || !ID.nextHint) return;
+        // isInteractableInTree, NOT isActive: the hint hand (n519_hand) is a CANVAS-ROOT node shared
+        // by every level, so it shows regardless of which level is on screen. isActive only checks the
+        // button itself — a button whose level root was deactivated without disposing the GM (e.g. a
+        // God Mode screen jump) still reads active, and this timer would park a hand over another level.
+        if (!btnId || !E.isInteractableInTree(btnId) || !ID.nextHint) return;
         A(ID.nextHint, true); S.track(ID.nextHint);
         var bc = E.centerLogical(btnId); E.setStageLocalPos(E.get(ID.nextHint), bc.x, bc.y); E.setScale(ID.nextHint, 0.7);
-        E.setAlpha(ID.nextHint, 0.5); E.doFade(ID.nextHint, 1, 0.8, "InOutSine", { loops: -1, yoyo: true });
-      }, nextHintDelay * 1000);
+        E.setAlpha(ID.nextHint, 0); E.doFade(ID.nextHint, 1, GHOST_FADE, "OutQuad", { onComplete: function () {
+          E.doFade(ID.nextHint, 0.55, 0.8, "InOutSine", { loops: -1, yoyo: true });   // then breathe, gently
+        } });
+        // the fourth and last hint family on the same idle rule as the others. The Tutorial keeps its
+        // authored delay but capped at IDLE_HINT_DELAY: it was 12s, i.e. the teaching level made the
+        // child wait LONGER for a hand than Level 1 does. No hand anywhere now takes more than 8s.
+      }, (isFirstLevel ? Math.min(nextHintDelay, IDLE_HINT_DELAY) : IDLE_HINT_DELAY) * 1000);
       if (btnId) reg(E.onClick(btnId, stopNextButtonHint, { key: "nexthint" }));
     }
     function stopNextButtonHint() { if (nextHintTimer) { S.clearTimeout(nextHintTimer); nextHintTimer = null; } if (ID.nextHint) { E.kill(ID.nextHint); A(ID.nextHint, false); } }
@@ -895,6 +1139,7 @@ var Controllers = (function () {
     self.dispose = function () {
       confettiToken.cancelled = true;
       stopGhost(); stopPart4Hint(); stopAnswerHint(); stopNextButtonHint();
+      hideAllHints();                 // nothing of this level may be left on screen (the Next hint hand is shared)
       Audio.stopNarration();
       DM.clear();
       if (scaleCtrl && scaleCtrl.destroy) scaleCtrl.destroy();
@@ -950,7 +1195,10 @@ var Controllers = (function () {
   return {
     GameManager: GameManager, BalanceScaleAnimator: BalanceScaleAnimator, ScaleController: BalanceScaleAnimator,
     setupDraggable: setupDraggable, ButtonAnimator: ButtonAnimator,
-    compareWeights: compareWeights
+    compareWeights: compareWeights,
+    // QA reads this so the cross-level size assert knows which (level, art) pairs are deliberate
+    // exceptions — a container that already shows the same art wins over the first-level size.
+    dropSizeFixed: function () { return Object.assign({}, DROP_SIZE_FIXED); }
   };
 })();
 if (typeof module !== "undefined") module.exports = Controllers;

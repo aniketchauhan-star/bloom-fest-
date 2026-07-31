@@ -135,14 +135,28 @@ var Engine = (function () {
       layoutChildren(c);
     }
   }
-  function computeScale() {
-    var vw = window.innerWidth, vh = window.innerHeight;
-    return Math.min(vw / LOGICAL_W, vh / LOGICAL_H);
+  // The box the stage is fitted into. Prefer the VIEWPORT element's rendered size: it is styled
+  // with 100dvh, so it tracks a collapsing mobile address bar, whereas window.innerHeight can lag
+  // and leave the stage scaled for a viewport that no longer exists (framing looks "zoomed"/clipped).
+  // window.* stays the fallback (headless QA, or before #viewport exists).
+  function fitBox() {
+    if (viewport && viewport.getBoundingClientRect) {
+      var b = viewport.getBoundingClientRect();
+      if (b && b.width > 0 && b.height > 0) return { w: b.width, h: b.height };
+    }
+    return { w: window.innerWidth, h: window.innerHeight };
   }
+  function computeScale() {
+    var b = fitBox();
+    return Math.min(b.w / LOGICAL_W, b.h / LOGICAL_H);
+  }
+  // relayout() is the SINGLE writer of the stage transform — nothing else may set it, or the two
+  // owners fight and the framing changes mid-session.
   function relayout() {
+    var box = fitBox();
     scale = computeScale();
-    offX = Math.round((window.innerWidth - LOGICAL_W * scale) / 2);
-    offY = Math.round((window.innerHeight - LOGICAL_H * scale) / 2);
+    offX = Math.round((box.w - LOGICAL_W * scale) / 2);
+    offY = Math.round((box.h - LOGICAL_H * scale) / 2);
     stage.style.width = LOGICAL_W + "px";
     stage.style.height = LOGICAL_H + "px";
     stage.style.transform = "translate(" + offX + "px," + offY + "px) scale(" + scale + ")";
@@ -506,6 +520,62 @@ var Engine = (function () {
     applyRect(rec); layoutChildren(rec);
   }
 
+  // ---------------------------------------------------------------- sprite preload / visible art
+  // Art is painted lazily (see maybePaint): the browser only starts FETCHING a sprite when its node
+  // is activated, so on a first visit a card could appear a beat before the item inside it. Warm the
+  // sprites (and record their natural size, used for seating) BEFORE a reveal so both land together.
+  // Never blocks a reveal for more than PRELOAD_TIMEOUT, and no-ops where there is no real image
+  // loader (the headless QA shim), so it can be awaited unconditionally.
+  var spriteMeta = {};        // src -> { w, h } natural pixel size
+  var spriteWarm = {};        // src -> Promise (one probe per src, ever)
+  var PRELOAD_TIMEOUT = 1500;
+  function warmPath(src) {
+    if (!src) return Promise.resolve();
+    if (spriteWarm[src]) return spriteWarm[src];
+    return (spriteWarm[src] = new Promise(function (res) {
+      var im;
+      try { im = new Image(); } catch (e) { return res(); }
+      if (!("complete" in im)) return res();      // no real image loading here — nothing to wait for
+      var done = false;
+      var finish = function () {
+        if (done) return; done = true;
+        if (im.naturalWidth > 0 && im.naturalHeight > 0) spriteMeta[src] = { w: im.naturalWidth, h: im.naturalHeight };
+        res();
+      };
+      im.onload = function () { if (im.decode) im.decode().then(finish, finish); else finish(); };
+      im.onerror = finish;
+      im.src = src;
+      if (im.complete) finish();                  // already cached
+      setTimeout(finish, PRELOAD_TIMEOUT);        // a stalled asset must never hold up the flow
+    }));
+  }
+  function preloadPaths(paths) { return Promise.all((paths || []).filter(Boolean).map(warmPath)); }
+  function spritePathsIn(id, out) {
+    var r = N[id]; if (!r) return out;
+    if (r._img && r._img.enabled !== false && r._img.sprite && r._img.sprite.path) out.push(r._img.sprite.path);
+    for (var i = 0; i < r.children.length; i++) spritePathsIn(r.children[i].id, out);
+    return out;
+  }
+  function preloadSprites(ids) {
+    var out = [];
+    (ids || []).forEach(function (id) { if (id) spritePathsIn(id, out); });
+    return preloadPaths(out);
+  }
+  // Rectangle of the VISIBLE ART inside an image node, in logical stage coordinates. With
+  // preserveAspect ("contain") a sprite whose aspect differs from its box is letterboxed inside it,
+  // so the DOM box is not where the picture is — seating an item by its box would leave the art
+  // hovering. Falls back to the box when the natural size isn't known yet or the fill is stretched.
+  function artRectLogical(id) {
+    var r = N[id], wr = worldRectLogical(id);
+    if (!r || !wr) return wr;
+    var img = r._img;
+    if (!img || img.preserveAspect !== true || !img.sprite || !img.sprite.path) return wr;
+    var m = spriteMeta[img.sprite.path];
+    if (!m || !(m.w > 0) || !(m.h > 0) || !(wr.w > 0) || !(wr.h > 0)) return wr;
+    var s = Math.min(wr.w / m.w, wr.h / m.h), dw = m.w * s, dh = m.h * s;
+    return { x: wr.x + (wr.w - dw) / 2, y: wr.y + (wr.h - dh) / 2, w: dw, h: dh };
+  }
+
   // ---------------------------------------------------------------- DOTween-style helpers
   function doAnchorPos(id, tx, ty, dur, easeName, opts) {
     opts = opts || {}; var r = N[id]; if (!r) return Promise.resolve();
@@ -552,42 +622,65 @@ var Engine = (function () {
   }
 
   // ---------------------------------------------------------------- effects
-  var confettiNodes = [];
+  // Sparkle bursts, rebuilt for frame rate. The old version was the game's worst hitch — it gave every
+  // particle its OWN requestAnimationFrame recursion (128 of them when Part 4 finished and both
+  // containers burst at once) and every particle carried two drop-shadow filters, i.e. two blur passes per
+  // element per frame. That is what made the box open and the Part-4 finish stutter. Now: ONE rAF loop
+  // for all particles, no filters (the warm centre is a baked gradient — see .confetti-p), fewer
+  // particles, and a hard cap so simultaneous bursts can never stack into a frame-rate problem.
+  var confettiNodes = [];          // active particles: { el, cx, cy, vx, vy, rise, spin, base, phase, t0, life, token }
+  var confettiRaf = null;
+  var CONFETTI_MAX = 80;
+  var SPARK_COLORS = ["#FFD84D", "#FFC93C", "#FFE9A0", "#FFB300", "#FFF3C4", "#FFDF70"];
   function confettiBurst(id, token) {
     var r = N[id];
     var rect = (r ? r.el : stage).getBoundingClientRect();
     var cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
-    var colors = ["#FFD84D", "#FFC93C", "#FFE9A0", "#FFB300", "#FFF3C4", "#FFDF70"];  // golden sparkle palette
-    var count = reducedMotion ? 20 : 64;
-    var life = reducedMotion ? 0.9 : 1.9;
+    var count = reducedMotion ? 12 : 30;
+    var life = reducedMotion ? 0.8 : 1.6;
+    count = Math.min(count, Math.max(0, CONFETTI_MAX - confettiNodes.length));
+    var t0 = performance.now();
     for (var i = 0; i < count; i++) {
-      var p = document.createElement("div"); p.className = "confetti-p";
-      p.style.left = cx + "px"; p.style.top = cy + "px";
-      p.style.background = colors[i % colors.length];
-      document.body.appendChild(p);
-      confettiNodes.push(p);
-      (function (p, i) {
-        // gentle magical sparkle: stars spread softly, drift UP, twinkle (pulse + fade), barely fall
-        var ang = (i / count) * Math.PI * 2 + (i % 3) * 0.5;
-        var spd = 110 + (i % 7) * 38;
-        var vx = Math.cos(ang) * spd, vy = Math.sin(ang) * spd - 120;
-        var rise = 70 + (i % 5) * 22, spin = (i % 2 ? 1 : -1) * (110 + (i % 4) * 55);
-        var base = 0.55 + (i % 5) * 0.16, phase = (i % 6) * 1.05;
-        var t0 = performance.now();
-        (function anim() {
-          if (token && token.cancelled) { removeConfetti(p); return; }
-          var dt = (performance.now() - t0) / 1000;
-          var x = cx + vx * dt, y = cy + vy * dt + 70 * dt * dt - rise * dt;   // float up, feather-light gravity
-          var tw = 0.5 + 0.6 * Math.abs(Math.sin(dt * 7 + phase));             // twinkle (size pulse)
-          p.style.transform = "translate(" + (x - cx) + "px," + (y - cy) + "px) rotate(" + (dt * spin) + "deg) scale(" + (base * tw) + ")";
-          p.style.opacity = Math.max(0, (dt < 0.15 ? dt / 0.15 : 1) * (1 - dt / life));  // fade in, then out
-          if (dt < life && p.isConnected) requestAnimationFrame(anim); else removeConfetti(p);
-        })();
-      })(p, i);
+      var el = document.createElement("div");
+      el.className = "confetti-p";
+      el.style.left = cx + "px"; el.style.top = cy + "px";
+      var col = SPARK_COLORS[i % SPARK_COLORS.length];
+      // glow baked into the fill instead of a filter: paint-only, no per-frame blur pass
+      el.style.background = "radial-gradient(circle at 50% 45%, #fffbe8 0%, #ffe89a 40%, " + col + " 100%)";
+      document.body.appendChild(el);
+      // gentle magical sparkle: stars spread softly, drift UP, twinkle (pulse + fade), barely fall
+      var ang = (i / Math.max(count, 1)) * Math.PI * 2 + (i % 3) * 0.5;
+      var spd = 110 + (i % 7) * 38;
+      confettiNodes.push({
+        el: el, cx: cx, cy: cy,
+        vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd - 120,
+        rise: 70 + (i % 5) * 22, spin: (i % 2 ? 1 : -1) * (110 + (i % 4) * 55),
+        base: 0.55 + (i % 5) * 0.16, phase: (i % 6) * 1.05,
+        t0: t0, life: life, token: token
+      });
     }
+    if (!confettiRaf && confettiNodes.length) confettiRaf = requestAnimationFrame(stepConfetti);
   }
-  function removeConfetti(p) { var i = confettiNodes.indexOf(p); if (i >= 0) confettiNodes.splice(i, 1); if (p && p.parentNode) p.remove(); }
-  function clearConfetti() { for (var i = confettiNodes.length - 1; i >= 0; i--) removeConfetti(confettiNodes[i]); }
+  function dropParticle(i) {
+    var p = confettiNodes[i];
+    confettiNodes.splice(i, 1);
+    if (p && p.el && p.el.parentNode) p.el.remove();
+  }
+  function stepConfetti() {
+    var t = performance.now();
+    for (var i = confettiNodes.length - 1; i >= 0; i--) {
+      var p = confettiNodes[i];
+      if (p.token && p.token.cancelled) { dropParticle(i); continue; }
+      var dt = (t - p.t0) / 1000;
+      if (dt >= p.life || !p.el.isConnected) { dropParticle(i); continue; }
+      var x = p.vx * dt, y = p.vy * dt + 70 * dt * dt - p.rise * dt;      // float up, feather-light gravity
+      var tw = 0.5 + 0.6 * Math.abs(Math.sin(dt * 7 + p.phase));          // twinkle (size pulse)
+      p.el.style.transform = "translate(" + x + "px," + y + "px) rotate(" + (dt * p.spin) + "deg) scale(" + (p.base * tw) + ")";
+      p.el.style.opacity = Math.max(0, (dt < 0.15 ? dt / 0.15 : 1) * (1 - dt / p.life));
+    }
+    confettiRaf = confettiNodes.length ? requestAnimationFrame(stepConfetti) : null;
+  }
+  function clearConfetti() { for (var i = confettiNodes.length - 1; i >= 0; i--) dropParticle(i); }
   function confettiCount() { return confettiNodes.length; }
 
   function popTrigger(id) {
@@ -622,6 +715,13 @@ var Engine = (function () {
     if (DEV) { try { assertNoDuplicateDomIds(); } catch (e) { console.error(e); throw e; } }
     window.addEventListener("resize", relayout);
     window.addEventListener("orientationchange", relayout);
+    // Re-assert the fit on every signal a mobile browser might give us instead of "resize": an
+    // address bar collapsing, a rotate, a restored tab, a pinch. Without these the stage can keep a
+    // stale scale and the game looks like it changed resolution part-way through.
+    window.addEventListener("pageshow", relayout);
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) relayout(); });
+    try { if (window.visualViewport && window.visualViewport.addEventListener) window.visualViewport.addEventListener("resize", relayout); } catch (e) {}
+    try { if (window.ResizeObserver && viewport) new window.ResizeObserver(function () { relayout(); }).observe(viewport); } catch (e) {}
     rafId = requestAnimationFrame(tick);
     return ROOT;
   }
@@ -638,6 +738,7 @@ var Engine = (function () {
     doAnchorPos: doAnchorPos, doAnchorPosY: doAnchorPosY, doScale: doScale, doFade: doFade, kill: kill,
     doPathScreen: doPathScreen, centerLogical: centerLogical, setStageLocalPos: setStageLocalPos,
     clientToLogical: clientToLogical, worldRectLogical: worldRectLogical, worldCenterLogical: worldCenterLogical, currentScale: currentScale, stageRect: stageRect,
+    preloadSprites: preloadSprites, preloadPaths: preloadPaths, artRectLogical: artRectLogical, spriteSize: function (src) { return spriteMeta[src] || null; },
     tween: tween, tweenP: tweenP, killTweensOf: killTweensOf, onUpdate: onUpdate, activeTweenCount: activeTweenCount,
     setText: setText, repaintSprite: repaintSprite, setSelfPaint: setSelfPaint,
     confettiBurst: confettiBurst, clearConfetti: clearConfetti, confettiCount: confettiCount, popTrigger: popTrigger,

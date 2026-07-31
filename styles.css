@@ -941,8 +941,56 @@
   }
   /* While the game is full screen, get the book chrome out of the way. */
   body.lbd-fullscreen .corner-arrow { display: none !important; }
-  /* The game runs to its own ending and the book takes itself to the next page,
-     so there is never a book control to draw over the fullscreen game. */
+  /* The book's own NEXT is hidden above, and the game page is gated, so the ONLY
+     way on from a finished game is the button below. */
+
+  /* ---- "Next" — the way out of a FINISHED game ----------------------------
+     script.js unhides this when the bridge reports the ending. Bottom-right, the
+     same corner and gold as the book's own NEXT so it reads as the same control,
+     but captioned because it appears over the game rather than over a page. */
+  .lbd-next {
+    position: absolute;
+    right: clamp(14px, 3vw, 38px);
+    bottom: clamp(14px, 3vh, 38px);
+    z-index: 5;                          /* over the iframe, inside the stage */
+    display: flex; align-items: center; justify-content: center; gap: 0.5em;
+    margin: 0; padding: 0 clamp(26px, 3.2vw, 44px);
+    /* Kid-friendly tap target, like --nav-box. The px FLOORS matter: a purely
+       vh-based size collapses to ~38px on a 720-tall laptop — under the 44px
+       minimum — which is exactly the short viewport this game runs on. */
+    min-height: clamp(58px, 8.5vh, 82px);
+    min-width:  clamp(150px, 17vw, 230px);
+    border: 2px solid rgba(255, 255, 255, 0.5);
+    border-radius: 999px;
+    background: linear-gradient(180deg, #ffcf5a, var(--nav-gold));
+    color: #4a2c00;
+    font-family: inherit; font-weight: 800;
+    font-size: clamp(19px, 2.9vh, 30px); letter-spacing: 0.02em;
+    cursor: pointer;
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
+    /* Fades AND lifts in, so a reader watching the confetti notices it arrive.
+       ⚠ NO fill-mode. With `both` the button HOLDS the keyframe's opacity:0 if the
+       animation never runs — a backgrounded/throttled tab does exactly that — and
+       the only way out of the game turns invisible while still being clickable.
+       Fill-mode none means the resting style below is the fallback, so a skipped
+       animation costs the flourish and nothing else. */
+    opacity: 1;
+    animation: lbdNextIn 420ms cubic-bezier(0.2, 0.9, 0.3, 1.35);
+    transition: transform 150ms ease, box-shadow 150ms ease;
+  }
+  .lbd-next svg { width: 1.05em; height: 1.05em; flex: none; }
+  .lbd-next:hover  { transform: scale(1.06); box-shadow: 0 8px 26px rgba(0,0,0,0.5); }
+  .lbd-next:active { transform: scale(0.95); }
+  .lbd-next:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+  .lbd-next[hidden] { display: none; }   /* [hidden] loses to display:flex otherwise */
+
+  @keyframes lbdNextIn {
+    from { opacity: 0; transform: translateY(14px) scale(0.9); }
+    to   { opacity: 1; transform: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .lbd-next { animation-duration: 1ms; }
+  }
 
   /* Respect users who prefer less motion */
   @media (prefers-reduced-motion: reduce) {

@@ -54,7 +54,7 @@ const pages = [
   //     turns to page 6 on its own.
   { type: "lbd",
     src:    "game/index.html",
-    poster: "game/assets/img/Slide_16_9_-_193.webp" },
+    poster: "game/assets/img/TITLE.webp" },
   { type: "video", src: "assets/5.webm" },   // 6
   { type: "end" },                          // 7 — THE END page (cream) + Replay
 ];
@@ -492,6 +492,7 @@ function preloadFinish() {
    ========================================================================== */
 const lbdStage = document.getElementById("lbdStage");
 const lbdFrame = document.getElementById("lbdFrame");
+const lbdNext  = document.getElementById("lbdNext");   // "Next" — shown once the game ends
 let lbdFullscreen = false;   // is the overlay expanded to full screen right now?
 let lbdStarted    = false;   // has the reader tapped "Let's Go" this visit?
 let lbdWasOn      = false;   // was the overlay showing on the previous refresh?
@@ -571,6 +572,8 @@ function resetLbd(rewarm) {
   if (!lbdFrame) return;
   lbdStarted = false;
   lbdReady   = false;
+  hideLbdNext();                           // the frame is going back to the intro
+
   clearTimeout(lbdRecoveryTimer); lbdRecoveryTimer = null;
   lbdRecovered = false;                    // a fresh visit gets its own retry budget
   lbdFrame.src = "about:blank";
@@ -676,14 +679,27 @@ function teardownLbd(rewarm) {
   resetLbd(rewarm);
 }
 
-/* ---- The game is over ---------------------------------------------------
+/* ---- The game has ENDED → offer the way out -----------------------------
    The bridge has already waited out the closing voice-over, so by the time this
-   arrives the celebration has had its moment. Fold the game back into the page,
-   then turn to the next story page by itself — the reader never has to work out
-   how to get back into the book. */
+   runs the celebration has had its moment. We do NOT turn the page here: the
+   reader leaves on their own tap, so a child who wants to sit and look at the
+   confetti can. The button is the only exit — the book's own NEXT is hidden
+   while the game is fullscreen and this page stays gated until exitLbd() runs. */
+function showLbdNext() {
+  if (!lbdNext) { exitLbd(); return; }    // no button in the DOM → don't strand anyone
+  lbdNext.hidden = false;
+}
+function hideLbdNext() {
+  if (lbdNext) lbdNext.hidden = true;
+}
+if (lbdNext) lbdNext.addEventListener("click", function () { exitLbd(); });
+
+/* ---- Leaving the finished game -----------------------------------------
+   Fold the game back into the page, then turn to the next story page. */
 function exitLbd() {
   if (lbdExiting) return;
   lbdExiting = true;
+  hideLbdNext();                          // it must not linger through the shrink
   clearGate(LBD_INDEX);                   // the game is done → this page's gate opens
   setLbdFullscreen(false);                // shrink the game back into the page rectangle
   lbdExitTimer = setTimeout(function () {
@@ -707,7 +723,7 @@ window.addEventListener("message", function (e) {
     lbdStarted = true;
     if (!lbdFullscreen) setLbdFullscreen(true);
   } else if (d.type === "lbd-complete") {
-    exitLbd();
+    showLbdNext();                        // the reader taps it to read on
   }
 });
 

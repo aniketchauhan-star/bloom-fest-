@@ -75,7 +75,7 @@ window.LAYOUT = {
    "components": {
     "image": {
      "sprite": {
-      "path": "assets/img/Slide_16_9_-_193.webp",
+      "path": "assets/img/TITLE.webp",
       "cropRect": {
        "x": 0,
        "y": 0,
@@ -3995,7 +3995,7 @@ window.LAYOUT = {
                "components": {
                 "image": {
                  "sprite": {
-                  "path": "assets/img/Vector_10__3_.webp",
+                  "path": null,
                   "cropRect": {
                    "x": 0,
                    "y": 0,
@@ -4391,7 +4391,7 @@ window.LAYOUT = {
                "components": {
                 "image": {
                  "sprite": {
-                  "path": "assets/img/Vector_10__3_.webp",
+                  "path": null,
                   "cropRect": {
                    "x": 0,
                    "y": 0,
@@ -4941,7 +4941,7 @@ window.LAYOUT = {
           },
           "image": {
            "sprite": {
-            "path": "assets/img/Vector__4_.webp",
+            "path": null,
             "cropRect": {
              "x": 0,
              "y": 0,
@@ -5016,7 +5016,7 @@ window.LAYOUT = {
           },
           "image": {
            "sprite": {
-            "path": "assets/img/Vector__4_.webp",
+            "path": null,
             "cropRect": {
              "x": 0,
              "y": 0,
@@ -6430,7 +6430,7 @@ window.LAYOUT = {
            "components": {
             "image": {
              "sprite": {
-              "path": "assets/img/Vector_11.webp",
+              "path": null,
               "cropRect": {
                "x": 0,
                "y": 0,
@@ -6624,7 +6624,7 @@ window.LAYOUT = {
            "components": {
             "image": {
              "sprite": {
-              "path": "assets/img/Vector_11.webp",
+              "path": null,
               "cropRect": {
                "x": 0,
                "y": 0,
@@ -10921,7 +10921,7 @@ window.LAYOUT = {
                "components": {
                 "image": {
                  "sprite": {
-                  "path": "assets/img/Vector_10__3_.webp",
+                  "path": null,
                   "cropRect": {
                    "x": 0,
                    "y": 0,
@@ -11387,7 +11387,7 @@ window.LAYOUT = {
                "components": {
                 "image": {
                  "sprite": {
-                  "path": "assets/img/Vector_10__3_.webp",
+                  "path": null,
                   "cropRect": {
                    "x": 0,
                    "y": 0,
@@ -12007,7 +12007,7 @@ window.LAYOUT = {
           },
           "image": {
            "sprite": {
-            "path": "assets/img/Vector__4_.webp",
+            "path": null,
             "cropRect": {
              "x": 0,
              "y": 0,
@@ -12082,7 +12082,7 @@ window.LAYOUT = {
           },
           "image": {
            "sprite": {
-            "path": "assets/img/Vector__4_.webp",
+            "path": null,
             "cropRect": {
              "x": 0,
              "y": 0,
@@ -13636,7 +13636,7 @@ window.LAYOUT = {
            "components": {
             "image": {
              "sprite": {
-              "path": "assets/img/Vector_10__5_.webp",
+              "path": null,
               "cropRect": {
                "x": 0,
                "y": 0,
@@ -13830,7 +13830,7 @@ window.LAYOUT = {
            "components": {
             "image": {
              "sprite": {
-              "path": "assets/img/Vector_10__5_.webp",
+              "path": null,
               "cropRect": {
                "x": 0,
                "y": 0,
@@ -18014,7 +18014,7 @@ window.LAYOUT = {
                "components": {
                 "image": {
                  "sprite": {
-                  "path": "assets/img/Vector_10__3_.webp",
+                  "path": null,
                   "cropRect": {
                    "x": 0,
                    "y": 0,
@@ -18410,7 +18410,7 @@ window.LAYOUT = {
                "components": {
                 "image": {
                  "sprite": {
-                  "path": "assets/img/Vector_10__3_.webp",
+                  "path": null,
                   "cropRect": {
                    "x": 0,
                    "y": 0,
@@ -18960,7 +18960,7 @@ window.LAYOUT = {
           },
           "image": {
            "sprite": {
-            "path": "assets/img/Vector__4_.webp",
+            "path": null,
             "cropRect": {
              "x": 0,
              "y": 0,
@@ -19035,7 +19035,7 @@ window.LAYOUT = {
           },
           "image": {
            "sprite": {
-            "path": "assets/img/Vector__4_.webp",
+            "path": null,
             "cropRect": {
              "x": 0,
              "y": 0,
@@ -20729,7 +20729,7 @@ window.LAYOUT = {
            "components": {
             "image": {
              "sprite": {
-              "path": "assets/img/Vector_11.webp",
+              "path": null,
               "cropRect": {
                "x": 0,
                "y": 0,
@@ -20923,7 +20923,7 @@ window.LAYOUT = {
            "components": {
             "image": {
              "sprite": {
-              "path": "assets/img/Vector_11.webp",
+              "path": null,
               "cropRect": {
                "x": 0,
                "y": 0,
@@ -25107,7 +25107,7 @@ window.LAYOUT = {
                "components": {
                 "image": {
                  "sprite": {
-                  "path": "assets/img/Vector_10__3_.webp",
+                  "path": null,
                   "cropRect": {
                    "x": 0,
                    "y": 0,
@@ -25503,7 +25503,7 @@ window.LAYOUT = {
                "components": {
                 "image": {
                  "sprite": {
-                  "path": "assets/img/Vector_10__3_.webp",
+                  "path": null,
                   "cropRect": {
                    "x": 0,
                    "y": 0,
@@ -26053,7 +26053,7 @@ window.LAYOUT = {
           },
           "image": {
            "sprite": {
-            "path": "assets/img/Vector__4_.webp",
+            "path": null,
             "cropRect": {
              "x": 0,
              "y": 0,
@@ -26128,7 +26128,7 @@ window.LAYOUT = {
           },
           "image": {
            "sprite": {
-            "path": "assets/img/Vector__4_.webp",
+            "path": null,
             "cropRect": {
              "x": 0,
              "y": 0,
@@ -27962,7 +27962,7 @@ window.LAYOUT = {
            "components": {
             "image": {
              "sprite": {
-              "path": "assets/img/Vector_11.webp",
+              "path": null,
               "cropRect": {
                "x": 0,
                "y": 0,
@@ -28156,7 +28156,7 @@ window.LAYOUT = {
            "components": {
             "image": {
              "sprite": {
-              "path": "assets/img/Vector_11.webp",
+              "path": null,
               "cropRect": {
                "x": 0,
                "y": 0,
@@ -32340,7 +32340,7 @@ window.LAYOUT = {
                "components": {
                 "image": {
                  "sprite": {
-                  "path": "assets/img/Vector_10__3_.webp",
+                  "path": null,
                   "cropRect": {
                    "x": 0,
                    "y": 0,
@@ -32736,7 +32736,7 @@ window.LAYOUT = {
                "components": {
                 "image": {
                  "sprite": {
-                  "path": "assets/img/Vector_10__3_.webp",
+                  "path": null,
                   "cropRect": {
                    "x": 0,
                    "y": 0,
@@ -33286,7 +33286,7 @@ window.LAYOUT = {
           },
           "image": {
            "sprite": {
-            "path": "assets/img/Vector__4_.webp",
+            "path": null,
             "cropRect": {
              "x": 0,
              "y": 0,
@@ -33361,7 +33361,7 @@ window.LAYOUT = {
           },
           "image": {
            "sprite": {
-            "path": "assets/img/Vector__4_.webp",
+            "path": null,
             "cropRect": {
              "x": 0,
              "y": 0,
@@ -35335,7 +35335,7 @@ window.LAYOUT = {
            "components": {
             "image": {
              "sprite": {
-              "path": "assets/img/Vector_10__5_.webp",
+              "path": null,
               "cropRect": {
                "x": 0,
                "y": 0,
@@ -35529,7 +35529,7 @@ window.LAYOUT = {
            "components": {
             "image": {
              "sprite": {
-              "path": "assets/img/Vector_10__5_.webp",
+              "path": null,
               "cropRect": {
                "x": 0,
                "y": 0,
