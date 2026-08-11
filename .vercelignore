@@ -17,6 +17,10 @@ LBD 1/
 # unreachable from the page.
 video-sources/
 
+# The reusable EMPTY flipbook (no videos, no sfx) — a starting point to copy out
+# for the next story, not part of this one. Nothing on the site links to it.
+template/
+
 # Dev tooling / docs that may sit alongside the game copy
 game/god-mode/
 game/qa/
