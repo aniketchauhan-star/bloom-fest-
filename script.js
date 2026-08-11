@@ -834,10 +834,19 @@ let mediaDelayTimer = null;   // pending "start this video after N ms" timer
 let mediaDelayIdx = -1;       // which page that pending timer belongs to
 let lastMediaIdx = -1;        // last page refreshMedia handled (to arm the blink once)
 
-function playVideoNow(v) {
+/* `restart` = the reader has just ARRIVED on this page, so the scene must begin at
+   00:00 — animation and voiceover together, however the page was left last time.
+   Without it a clip that was interrupted mid-scene resumed from wherever it was
+   paused, so coming back to a page dropped the reader into the middle of a
+   sentence with the animation already half-played.
+   ⚠ It is NOT unconditional. refreshMedia() runs TWICE per turn (once as the flip
+   starts, once when it settles ~FLIP_MS later); rewinding on both would restart
+   every scene a beat after it began. Only the arrival call passes true — see the
+   `arrived` flag in refreshMedia(). */
+function playVideoNow(v, restart) {
   try {
     v.preload = "auto";                       // make sure it's buffering before we play
-    if (v.ended) v.currentTime = 0;
+    if (restart || v.ended) v.currentTime = 0;
     v.muted = false;                          // try WITH sound (primed in the Play gesture)
     const p = v.play();
     if (p && p.catch) p.catch(function () { v.muted = true; v.play().catch(function () {}); });
@@ -873,7 +882,13 @@ function primeVideo(i) {
 
 function refreshMedia() {
   const idx = flipped;                         // the front-most page right now
-  if (idx !== lastMediaIdx) {
+  // ARRIVAL vs RE-ASSERT. True only on the FIRST refreshMedia for this page, which
+  // is the flip-start call — so it means "the reader just navigated here", by NEXT,
+  // BACK, keyboard, swipe or any programmatic turn (they all route through
+  // goNext/goPrev → turnLeaf). The settle call ~FLIP_MS later sees the same idx and
+  // gets false, so it stays the idempotent safety net it was built to be.
+  const arrived = (idx !== lastMediaIdx);
+  if (arrived) {
     lastMediaIdx = idx;
     /* ---- ALREADY-SEEN PAGES ARE NEVER GATED AGAIN ------------------------
        The video gate is there so a FIRST-time reader watches the whole scene
@@ -910,7 +925,10 @@ function refreshMedia() {
     if (delayMs > 0) {
       // Already playing this page, or already counting down for it → leave it alone
       // (so the flip-start + flip-end calls don't restart the 3s countdown).
-      if (mediaDelayIdx === idx && (mediaDelayTimer || !v.paused)) { /* keep going */ }
+      // A fresh ARRIVAL always falls through to the reset below, though: mediaDelayIdx
+      // can still be pointing at this page from an earlier visit whose countdown has
+      // already fired, and honouring that stale match would skip the rewind.
+      if (!arrived && mediaDelayIdx === idx && (mediaDelayTimer || !v.paused)) { /* keep going */ }
       else {
         try { v.pause(); v.currentTime = 0; } catch (_) {}   // hold on the first frame
         mediaDelayIdx = idx;
@@ -920,7 +938,7 @@ function refreshMedia() {
         }, delayMs);
       }
     } else {
-      playVideoNow(v);                          // no delay → instant
+      playVideoNow(v, arrived);                 // no delay → instant, from 00:00 on arrival
     }
     armVideoWatchdog(idx, v);                   // NEXT waits on "ended" — don't let a dead clip strand us
   } else {
@@ -1177,14 +1195,14 @@ function enterFullscreen() {
     if (document.fullscreenElement || document.webkitFullscreenElement) return;
     var el = document.documentElement;
     var req = el.requestFullscreen || el.webkitRequestFullscreen || el.webkitRequestFullScreen || el.msRequestFullscreen;
-    if (req) { var p = req.call(el); if (p && p.catch) p.catch(function () {}); }
+    if (req) { markSmoothRescale(true); var p = req.call(el); if (p && p.catch) p.catch(function () {}); }
   } catch (_) {}
 }
 function exitFullscreen() {
   try {
     if (!(document.fullscreenElement || document.webkitFullscreenElement)) return;
     var ex = document.exitFullscreen || document.webkitExitFullscreen || document.webkitCancelFullScreen || document.msExitFullscreen;
-    if (ex) { var p = ex.call(document); if (p && p.catch) p.catch(function () {}); }
+    if (ex) { markSmoothRescale(true); var p = ex.call(document); if (p && p.catch) p.catch(function () {}); }
   } catch (_) {}
 }
 
@@ -1448,7 +1466,120 @@ window.addEventListener("keydown", function (e) {
 
 // Keep the canvas scaled to fit on resize / rotate.
 let _resizeSettle = null;
+
+/* ---- ONE-OFF RESCALES vs CONTINUOUS ONES ---------------------------------
+   Two very different things arrive as the same `resize` event:
+     • a DRAG-resize — a burst of events as the reader hauls the window edge. The
+       scale must follow instantly; a transition here trails the pointer and reads
+       as rubbery. That is what .is-resizing is for.
+     • FULLSCREEN engaging — one discrete jump, and the one that mattered here: the
+       viewport grows a beat AFTER the tap that asked for it, so the new
+       --book-scale used to land mid-hinge and snap the book to a new size and
+       position while the reader watched the cover open.
+   We cannot tell them apart from the event itself, and a fullscreen change fires
+   BOTH `resize` and `fullscreenchange` in an order that differs between browsers.
+   So instead we open a short window the moment fullscreen is REQUESTED, and treat
+   any viewport change inside it as the one-off — whichever event gets there first.
+   The window is generous because some browsers animate into fullscreen. */
+const SMOOTH_RESCALE_MS     = 300;   // keep in sync with body.is-rescaling in styles.css
+const SMOOTH_RESCALE_WINDOW = 900;   // how long after the request a change still counts
+let _smoothRescaleUntil = 0;
+let _rescaleSettle = null;
+/* `captureBefore` — snapshot the pre-change geometry too. Only true where we are
+   genuinely AHEAD of the change: the tap that REQUESTS fullscreen still sees the old
+   viewport. By the time fullscreenchange fires the box may already have moved, and
+   re-reading it there would cache the displaced position as the glide's origin —
+   which reintroduces the jump. Nor can it be seeded at startup: `.scene` runs a 900ms
+   sceneIn entry animation (a 0.96 scale on an ANCESTOR), so a rect read during it is
+   short by that factor and the book would visibly pop on the first rescale. */
+function markSmoothRescale(captureBefore) {
+  _smoothRescaleUntil = Date.now() + SMOOTH_RESCALE_WINDOW;
+  if (captureBefore) rememberBookRect();
+}
+
+/* The book's rect while nothing is changing.
+   ⚠ WHY THIS IS CACHED. A `resize` fires only AFTER layout has already re-centred
+   the book, so the pre-change geometry cannot be measured from inside the handler —
+   by then it is gone, and measuring there yields the already-displaced box (which
+   makes a FLIP invert back to the wrong place and leaves the very jump it is meant
+   to remove). So we keep the resting rect from the last time the viewport was
+   settled, and that is the "first" the glide starts from. */
+let _bookRestRect = null;
+function rememberBookRect() {
+  if (!flipScaleEl) return;
+  const r = flipScaleEl.getBoundingClientRect();
+  if (r.width > 0) _bookRestRect = r;
+}
+
+/* Write the FLIP "invert" values (identity = 0px, 0px, 1). */
+function setRescaleFix(dx, dy, k) {
+  flipScaleEl.style.setProperty("--fix-x", dx + "px");
+  flipScaleEl.style.setProperty("--fix-y", dy + "px");
+  flipScaleEl.style.setProperty("--fix-s", String(k));
+}
+
+/* ---- The ONE-OFF rescale, done as a FLIP ---------------------------------
+   Apply the new scale instantly (so layout, hit-testing and every rect-based
+   consumer are immediately correct), then park the book back exactly where it was
+   and animate that correction away. The reader sees one continuous glide from the
+   old size+position to the new one; the DOM only ever holds the new truth.
+   The invert is MEASURED, not derived. Deriving it means modelling how
+   transform-origin composes with percentage positioning and the translate(-50%,-50%)
+   already in the chain — get any of that subtly wrong and the book lurches to the
+   wrong place before gliding back, which is worse than the snap. Instead: apply the
+   scale part, ask the browser where that actually put things, and let the leftover
+   difference BE the translate. Exact by construction, and it stays exact if the
+   centring above is ever reworked. The translate is outermost and .stage carries no
+   transform of its own, so it shifts the result by exactly that many screen px. */
+function smoothRescale() {
+  const first = _bookRestRect;                      // captured BEFORE the change (see above)
+  document.body.classList.remove("is-rescaling");   // the invert must NOT animate
+  setRescaleFix(0, 0, 1);
+  fitScale();                                       // the real change, instantly
+  const last = flipScaleEl.getBoundingClientRect();
+  // No usable "before" (first paint), or a degenerate box (the portrait rotate-prompt
+  // hides the scene) — nothing to glide from.
+  if (!first || !(first.width > 0 && last.width > 0)) { afterRescaleSettled(); return; }
+  const k = first.width / last.width;
+  setRescaleFix(0, 0, k);                           // old SIZE back; position still off
+  let probe = flipScaleEl.getBoundingClientRect();
+  let dx = first.left - probe.left, dy = first.top - probe.top;
+  setRescaleFix(dx, dy, k);                         // …and now the old POSITION too
+  /* Re-reading the rect does double duty. It VERIFIES the invert landed, and it
+     FLUSHES it as the transition's starting style — which offsetWidth cannot be
+     trusted to do, because changing a transform does not invalidate layout, so the
+     browser is free to skip the recalc and then animate from the previous transform
+     instead (the book lurches, then glides from the wrong place).
+     If anything is still out, the residual is a pure translation, so one more pass
+     closes it exactly. */
+  probe = flipScaleEl.getBoundingClientRect();
+  if (Math.abs(probe.left - first.left) > 0.5 || Math.abs(probe.top - first.top) > 0.5) {
+    dx += first.left - probe.left; dy += first.top - probe.top;
+    setRescaleFix(dx, dy, k);
+    void flipScaleEl.getBoundingClientRect();
+  }
+  requestAnimationFrame(function () {               // PLAY: glide to identity
+    document.body.classList.add("is-rescaling");
+    setRescaleFix(0, 0, 1);
+    clearTimeout(_rescaleSettle);
+    _rescaleSettle = setTimeout(afterRescaleSettled, SMOOTH_RESCALE_MS + 80);
+  });
+}
+function afterRescaleSettled() {
+  document.body.classList.remove("is-rescaling");
+  setRescaleFix(0, 0, 1);                 // leave the chain at identity, not mid-glide
+  rememberBookRect();                     // this is the new resting geometry
+  // Anything parked against the book's rect was measured MID-glide, so it is
+  // slightly off until the transform has landed. Re-read it now.
+  if (flipHint && flipHint.classList.contains("show")) positionFlipHint();
+  if (lbdStage && lbdStage.classList.contains("visible") && !lbdFullscreen) positionLbdStage();
+}
+
 function onViewportChange() {
+  if (Date.now() < _smoothRescaleUntil) {
+    smoothRescale();
+    return;
+  }
   // Suppress the page-turn transitions while the viewport is actively changing, so
   // a rapid resize / resolution change can't make the book LOOK like it's auto-
   // flipping (the leaves re-render during the scale change). Restored once settled.
@@ -1456,12 +1587,19 @@ function onViewportChange() {
   clearTimeout(_resizeSettle);
   _resizeSettle = setTimeout(function () { document.body.classList.remove("is-resizing"); }, 220);
   fitScale();
+  rememberBookRect();     // each drag step's result is the next one's "before"
   // Re-park the LBD overlay over the (re-scaled) page — unless it's fullscreen,
   // where it already fills the viewport via CSS.
   if (lbdStage && lbdStage.classList.contains("visible") && !lbdFullscreen) positionLbdStage();
 }
 window.addEventListener("resize", onViewportChange);
 window.addEventListener("orientationchange", onViewportChange);
+/* The fullscreen state actually flipping re-arms the window: on a browser that
+   animates into fullscreen the viewport can still be a frame or two behind, which
+   would otherwise fall outside the window opened at request time and snap. */
+["fullscreenchange", "webkitfullscreenchange"].forEach(function (t) {
+  document.addEventListener(t, function () { markSmoothRescale(false); onViewportChange(); });
+});
 
 /* ---- Block ALL zoom (pinch, double-tap, ctrl+wheel, ctrl +/-) ------------
    The book is fixed-layout, so zoom would only break it. */

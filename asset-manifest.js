@@ -3,7 +3,7 @@
    is accurate from the very first frame instead of guessing and jumping.
    Keys are the EXACT request URLs (encoded per segment). Regenerate whenever
    media is added, removed or re-encoded:  node tools/gen-asset-manifest.mjs
-   140 files, 24.41 MB total. */
+   140 files, 24.40 MB total. */
 window.ASSET_MANIFEST = {
   "game/assets/img/Group_6.webp": 1264,
   "game/assets/img/Group_540-1.webp": 1786,
@@ -124,11 +124,11 @@ window.ASSET_MANIFEST = {
   "game/assets/img/IMG_5029.webp": 75828,
   "game/assets/img/IMG_5030.webp": 75894,
   "game/assets/img/IMG_5025.webp": 76208,
-  "assets/posters/4.webp": 76926,
+  "assets/posters/4.webp": 76870,
   "game/assets/img/ChatGPT_Image_Jan_7__2026__04_11_11_PM_1.webp": 77366,
   "game/assets/img/IMG_5027.webp": 77508,
-  "game/js/controllers.js": 77510,
   "game/assets/img/IMG_5032.webp": 77620,
+  "game/js/controllers.js": 80941,
   "game/assets/img/Rectangle_100.webp": 82636,
   "assets/posters/2.webp": 83902,
   "assets/posters/5.webp": 94942,
@@ -140,7 +140,7 @@ window.ASSET_MANIFEST = {
   "game/assets/img/Vector__6_.webp": 556806,
   "game/js/data.js": 885391,
   "game/assets/audio/bgm.ogg": 1567229,
-  "assets/4.webm": 2252586,
+  "assets/4.webm": 2236795,
   "assets/2.webm": 3223018,
   "assets/3.webm": 3774901,
   "assets/1.webm": 4029473,

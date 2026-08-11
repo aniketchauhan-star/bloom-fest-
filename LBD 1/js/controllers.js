@@ -1170,6 +1170,31 @@ var Controllers = (function () {
   }
 
   // ---- ButtonAnimator (intro "Let's Go") ----
+  /* THE TITLE-CARD -> GAMEPLAY HANDOVER — must never show a bare stage between the
+     two screens.
+     The old sequence could. It faded the intro DOWN and activated the gameplay panel
+     in the SAME tick, so the only thing covering the empty stage was the panel
+     happening to paint in time. Usually it did: the panel is a later sibling, so it
+     covers the intro on the very next frame — which also meant the intro's fade was
+     never actually seen, making this a hard cut rather than the cross-fade the code
+     reads like. But the panel's sprites are painted lazily, AT activation (see
+     maybePaint/paintDeferredIn in engine.js), so whenever that art was not already
+     decoded the same tick left a fading title card over the dark #14101f stage —
+     the blank/black flash.
+     So the handover is inverted and strictly ordered:
+       1. start warming the gameplay screen's art the moment the button is tapped, so
+          the fetch overlaps the beat below instead of following it;
+       2. mount the panel at alpha 0 — activating it is what paints its sprites, so it
+          decodes while invisible rather than in front of the reader;
+       3. fade the panel UP while the intro stays FULLY OPAQUE underneath it;
+       4. only once the panel is solid, deactivate the intro.
+     At every instant there is an opaque screen on top, so no frame can show the
+     stage through — the blank state is impossible by construction, not by timing.
+     The intro is deliberately NOT faded out any more: two half-transparent screens
+     would let the dark stage show BETWEEN them, which is the very artefact this
+     exists to remove. */
+  var HANDOVER_S    = 0.4;    // cross-fade duration (was the intro's fade-out time)
+  var HANDOVER_WARM_MS = 700; // …but never wait longer than this for the art to warm
   function ButtonAnimator(cfg, introId, onActivateLevel) {
     var btnId = nid(cfg.goButton), panelId = nid(cfg.gameplayPanel);
     var clip = cfg.clip && typeof cfg.clip === "string" ? cfg.clip : null;
@@ -1179,15 +1204,52 @@ var Controllers = (function () {
     E.doScale(btnId, 1, 1, "InOutSine", { from: 0.8, loops: -1, yoyo: true });
     var done = false;
     E.ariaLabel(btnId, "Let's Go");
+
+    // Resolves when the gameplay screen's sprites are decoded, or when
+    // HANDOVER_WARM_MS is up — whichever comes first. A slow asset must delay the
+    // handover a little, never hold the tap hostage: the cross-fade below is safe
+    // either way, because the intro stays up until the panel is opaque.
+    function warmPanelArt() {
+      if (!panelId) return Promise.resolve();
+      var warm;
+      try { warm = E.preloadSprites([panelId]); } catch (e) { return Promise.resolve(); }
+      return Promise.race([
+        Promise.resolve(warm),
+        new Promise(function (res) { setTimeout(res, HANDOVER_WARM_MS); })
+      ]);
+    }
+
+    function handOver() {
+      if (!panelId) {                         // nothing to hand over to
+        if (introId) E.setActive(introId, false);
+        return;
+      }
+      if (!introId) {                         // no title card underneath -> a fade would
+        E.setAlpha(panelId, 1);               // start from the dark stage, so just show it
+        E.setActive(panelId, true);
+        if (onActivateLevel) onActivateLevel(panelId);
+        return;
+      }
+      E.setAlpha(panelId, 0);                 // mount INVISIBLE: paints + decodes unseen
+      E.setActive(panelId, true);             // (this is what triggers paintDeferredIn)
+      if (onActivateLevel) onActivateLevel(panelId);
+      E.doFade(panelId, 1, HANDOVER_S, "OutQuad", {
+        onComplete: function () {
+          E.setAlpha(panelId, 1);             // land exactly on opaque
+          E.setActive(introId, false);        // …and only now retire the title card
+        }
+      });
+    }
+
     E.onClick(btnId, function () {
       if (done) return; done = true;                 // transition lock: one activation only
       if (clip) Audio.playSFX(clip);
       E.kill(btnId);
       E.setInteractable(btnId, false);
+      var warm = warmPanelArt();                     // starts NOW, overlaps the delay below
       setTimeout(function () {
         E.setActive(btnId, false);
-        if (introId) E.doFade(introId, 0, 0.4, "OutQuad", { onComplete: function () { E.setActive(introId, false); } });
-        if (panelId) { E.setActive(panelId, true); if (onActivateLevel) onActivateLevel(panelId); }
+        warm.then(handOver, handOver);                // a warm failure must not strand the tap
       }, (cfg.delay || 0.3) * 1000);
     }, { key: "letsgo" });
   }

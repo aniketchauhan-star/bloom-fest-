@@ -91,7 +91,16 @@
   .flip-scale {
     position: absolute; top: 50%; left: 50%;
     width: 1280px; height: 720px;
-    transform: translate(-50%, -50%) scale(var(--book-scale, 0.5));
+    /* --fix-* are the "invert" half of a FLIP, and are IDENTITY at rest. Centring
+       here is layout (top/left percentages against .stage), and layout cannot be
+       transitioned — when the viewport changes those percentages re-resolve in a
+       single frame and the book TELEPORTS. So a one-off rescale measures the book
+       before and after, parks it back where it was with these three values, and then
+       animates them to identity (see smoothRescale in script.js). They must stay
+       LEFTMOST: transform functions compose outermost-first, and this correction
+       has to act on the finished picture, in screen space. */
+    transform: translate(var(--fix-x, 0px), var(--fix-y, 0px)) scale(var(--fix-s, 1))
+               translate(-50%, -50%) scale(var(--book-scale, 0.5));
     transform-origin: center center;
     perspective: 2400px;                         /* depth for the 3D book */
     --pw: 1280px; --ph: 720px; --thick: 42px;   /* fixed page-block dimensions */
@@ -215,6 +224,18 @@
   body.is-resizing .leaf .curl,
   body.is-resizing #flipbook,
   body.is-resizing .flip-scale { transition: none !important; animation: none !important; }
+
+  /* ---- ONE-OFF RESCALE (entering / leaving fullscreen) ----------------------
+     Opening the book asks for fullscreen, and the viewport only grows a beat AFTER
+     that tap — so fitScale() wrote a brand-new --book-scale in the middle of the 6s
+     cover hinge and the whole book SNAPPED to its new size, shifting position as it
+     went. Letting the scale glide instead turns that into motion the eye can follow.
+     Opt-in, because a DRAG-resize must stay instant: a transition there trails the
+     pointer and reads as rubbery, which is what .is-resizing above exists for. JS
+     adds this class only for the discrete fullscreen change (see markSmoothRescale
+     in script.js) and never sets both at once — .is-resizing would kill this
+     transition with its !important. */
+  body.is-rescaling .flip-scale { transition: transform 300ms cubic-bezier(0.4, 0, 0.2, 1); }
 
   /* ---- Page-turn hint (hand on the RIGHT side of the book) -------------------
      Guidance for HOW to turn the page: a 3D hand on the book's right edge does a
