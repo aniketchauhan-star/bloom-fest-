@@ -13,5 +13,13 @@ desktop.ini
 *.pass-0.log
 *.pass-0.log.mbtree
 
+# The mp4 video MASTERS that tools/convert-media.py encodes into assets/*.webm.
+# ~54MB of source that nothing on the site ever requests — the shipped media is
+# the webm. Keep them here to re-encode from, but never commit or deploy them,
+# and never leave them in assets/: gen-asset-manifest.mjs walks that whole folder,
+# so an mp4 sitting there gets added to the preloader's warm list and the reader
+# waits on 54MB they will never watch.
+video-sources/
+
 # See .vercelignore for what is excluded from the DEPLOY (notably "LBD 1/", the
 # game's authoring copy with its God Mode / QA suites — game/ is what ships).

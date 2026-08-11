@@ -3,7 +3,7 @@
    is accurate from the very first frame instead of guessing and jumping.
    Keys are the EXACT request URLs (encoded per segment). Regenerate whenever
    media is added, removed or re-encoded:  node tools/gen-asset-manifest.mjs
-   140 files, 24.40 MB total. */
+   140 files, 24.41 MB total. */
 window.ASSET_MANIFEST = {
   "game/assets/img/Group_6.webp": 1264,
   "game/assets/img/Group_540-1.webp": 1786,
@@ -70,7 +70,6 @@ window.ASSET_MANIFEST = {
   "game/assets/img/The_Royal_Bloom_Fest__26__7.webp": 11542,
   "game/assets/audio/the_sorting_path__1_.ogg": 11830,
   "game/assets/audio/A_crown_and_a_ribbon.ogg": 12140,
-  "game/js/embed-bridge.js": 12552,
   "game/assets/audio/Tap_the_lighter_item.ogg": 12568,
   "game/assets/img/The_Royal_Bloom_Fest__26__9.webp": 12888,
   "game/assets/img/feather_01.webp": 12912,
@@ -79,6 +78,7 @@ window.ASSET_MANIFEST = {
   "game/js/main.js": 13828,
   "game/assets/img/Untitled_design__33__6__1_.webp": 13830,
   "game/assets/audio/a_ribbon_and_a_bell.ogg": 14281,
+  "game/js/embed-bridge.js": 14365,
   "sfx/Page%20flip.ogg": 14881,
   "game/assets/img/Untitled_design__34__3_1.webp": 15202,
   "game/assets/audio/A_lantern_and_a_feather.ogg": 15561,
@@ -140,9 +140,9 @@ window.ASSET_MANIFEST = {
   "game/assets/img/Vector__6_.webp": 556806,
   "game/js/data.js": 885391,
   "game/assets/audio/bgm.ogg": 1567229,
-  "assets/4.webm": 2248777,
-  "assets/2.webm": 3222514,
-  "assets/3.webm": 3770968,
-  "assets/1.webm": 4028874,
-  "assets/5.webm": 4122726
+  "assets/4.webm": 2252586,
+  "assets/2.webm": 3223018,
+  "assets/3.webm": 3774901,
+  "assets/1.webm": 4029473,
+  "assets/5.webm": 4126760
 };

@@ -3,11 +3,18 @@
 Usage:  python tools/convert-media.py            (ffmpeg + ffprobe on PATH)
         FFMPEG_BIN=/path/to/bin python tools/convert-media.py
 
-Sources are NOT deleted: read the report, confirm every line says OK, then remove
-the originals yourself. Afterwards regenerate the preloader size table:
+Sources are NOT deleted: read the report, confirm every line says OK. Afterwards
+regenerate the preloader size table:
         node tools/gen-asset-manifest.mjs
 
-  video : mp4  -> webm  (VP9 constrained-quality + Opus, yuv420p)
+TO SWAP THE STORY VIDEOS: put the new masters in video-sources/ as 1..5.mp4, run
+this script, then run gen-asset-manifest.mjs. Do NOT put mp4s in assets/ — the
+manifest generator warms every file in that folder, so the sources would be
+downloaded by every reader on top of the webm the page actually plays. Nothing in
+script.js needs editing: the page list points at assets/N.webm and each poster
+path is derived from it by swapping the extension.
+
+  video : video-sources/N.mp4 -> assets/N.webm  (VP9 constrained-quality + Opus)
   audio : mp3  -> ogg   (Opus 64-96k)
   image : png  -> webp  (q82)
 
@@ -59,7 +66,13 @@ def size(p):
 results = []
 
 # ─────────────────────────────────────────────────────────── VIDEO → WebM
-VIDEOS = [os.path.join(ROOT, "assets", f"{i}.mp4") for i in range(1, 6)]
+# Masters live OUTSIDE assets/ on purpose. gen-asset-manifest.mjs adds every file
+# in assets/ to the preloader's warm list, so an mp4 left in there makes the reader
+# download ~54MB of source they never watch. Drop replacement mp4s in video-sources/
+# (named 1..5.mp4) and re-run this script; the webm it writes into assets/ is what
+# the site loads.
+SRC_DIR = os.path.join(ROOT, "video-sources")
+VIDEOS  = [os.path.join(SRC_DIR, f"{i}.mp4") for i in range(1, 6)]
 
 def encode_video(src, dst, crf, vcap_k, two_pass=False, abr_k=None):
     common = ["-c:v", "libvpx-vp9", "-pix_fmt", "yuv420p", "-row-mt", "1",
@@ -85,7 +98,10 @@ def encode_video(src, dst, crf, vcap_k, two_pass=False, abr_k=None):
 
 print("═══ VIDEO → WebM (VP9 + Opus, constrained quality) ═══", flush=True)
 for src in VIDEOS:
-    dst = os.path.splitext(src)[0] + ".webm"
+    # dst is built against assets/, NOT alongside the source — the master lives in
+    # video-sources/ and the encode has to land where the page looks for it.
+    dst = os.path.join(ROOT, "assets",
+                       os.path.splitext(os.path.basename(src))[0] + ".webm")
     v = probe(src, "v:0", ["bit_rate"])
     f = fmt_probe(src)
     vbr = int(v.get("bit_rate") or 0)
@@ -119,7 +135,7 @@ for i in range(1, 6):
          "-c:v", "libwebp", "-quality", "82", "-compression_level", "6", dst])
     print(f"  posters/{i}.webp  {size(dst)/1024:.0f}KB", flush=True)
     results.append({"kind": "poster", "src": f"{i}.webm frame0", "dst": f"posters/{i}.webp",
-                    "before": 0, "after": size(dst), "note": "new (was a 404)"})
+                    "before": 0, "after": size(dst), "note": "frame 0 of the encoded webm"})
 
 # ─────────────────────────────────────────────────────────── AUDIO → Ogg/Opus
 def encode_audio(src, dst, kbps, channels=None):

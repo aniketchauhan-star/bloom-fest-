@@ -12,6 +12,11 @@
 # the data scripts. ~11MB, none of it reachable from the site.
 LBD 1/
 
+# The mp4 video masters (see .gitignore). tools/convert-media.py turns these into
+# assets/*.webm, which is what the site actually loads; the sources are ~54MB and
+# unreachable from the page.
+video-sources/
+
 # Dev tooling / docs that may sit alongside the game copy
 game/god-mode/
 game/qa/

@@ -1,4 +1,4 @@
-/* ============================================================================
+  /* ============================================================================
    THE STORY NIGHT — flipbook behaviour.
    Diagnostic first: surface any REAL JavaScript error on screen (a silent error
    would stop the click handlers from ever attaching). Image / video / network
