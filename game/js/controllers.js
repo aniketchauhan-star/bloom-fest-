@@ -83,8 +83,155 @@ var Controllers = (function () {
   // How long a child may sit doing nothing before a hand comes out to show them what to do — for every
   // level AFTER the Tutorial (the Tutorial teaches, so it demonstrates straight away). Covers the
   // drag-guide hand in Part 3 and Part 4 and the tap hand in the Part-3 answer step.
-  var IDLE_HINT_DELAY = 8;
+  // How long a child may sit doing nothing before a hand comes out to show them what to do. ONE
+  // rule for all four hands — the box, the Next button, the drag guide and the answer hand — for
+  // every level after the Tutorial (the Tutorial teaches, so it demonstrates straight away).
+  //
+  // 3s, down from 8s. At 8s a completion screen read as the game having stopped: the child had
+  // finished the task and was left with no idea how to go on. Wherever a level authored a LONGER
+  // delay than this (the Tutorial's 12s Next hint, Level 1's 12s Part-4 ghost) it is capped at the
+  // call sites, so no hand anywhere can now take more than 3s to appear.
+  var IDLE_HINT_DELAY = 3;
   var GHOST_FADE = 0.45;   // how long the drag-guide hand takes to fade up (it must never just blink on)
+  // How long a Part-2 name scroll takes to unfurl. It is also the LONGEST a cued unfurl may take:
+  // the name text only appears when the unfurl completes (see openScroll), so this doubles as the
+  // lag between "the scroll starts opening" and "the child can read the word" — see part2Cues.
+  var SCROLL_OPEN = 0.7;
+
+  // ---- gamified tap affordance (every button in the game shares this) ----
+  // Buttons used to appear and then sit perfectly still. That was worst on Try Again: it is shown
+  // at the exact moment the child is already stuck, is the ONLY way to unlock the items again, and
+  // gave no sign it wanted pressing. Now a waiting button glows (CSS .rb-tappable) and BUMPS: a
+  // quick springy overshoot that settles, then a beat of stillness before the next one. A bump
+  // reads as "press me"; an even, continuous breathe reads as decoration — which is precisely what
+  // the child was ignoring. The beat between bumps is what keeps it inviting instead of nagging.
+  // Measured shape: peaks at 0.10s (a quick pop), settles back through a -1.7% undershoot (what
+  // makes it read as springy rather than as a zoom), and is at rest again by 0.68s — then holds
+  // perfectly still for 0.83s before the next one.
+  //
+  // Two channels only: LIFT and SWELL, straight up and straight back down. There was a third — a
+  // small rotation — and it had to go: a wide rectangular button reads as crooked rather than
+  // lively when it rotates, because the eye judges it against the horizontal edges of the message
+  // bar and the scene behind it. Vertical-only motion keeps the button square to the world and is
+  // what actually reads as "bouncy".
+  var BUMP_PERIOD = 1.5;    // seconds from the start of one bump to the next
+  var BUMP_ACTIVE = 0.45;   // fraction of that period the bump is actually moving in
+  var BUMP_SCALE = 0.20;    // -> ~9.7% peak swell: clearly noticeable, never cartoonish
+  var BUMP_HOP = 22;        // -> ~10.6 logical px of lift at peak: this is what reads as a HOP
+                            //    rather than a zoom. Scale alone looked like the button breathing
+                            //    towards the camera; lifting it off the page is what says "bouncy".
+  var POP_SETTLE = 0.35;    // beat between a button popping in and its first bump, so the pop's
+                            // overshoot and the bump's overshoot don't run together as a double jolt
+
+  // ---- tap-hint hand placement ----
+  // The pointing-hand sprite (frame_00_delay-0.02s.webp) draws its hand in the LOWER-MIDDLE of a
+  // mostly empty 1200x1200 frame — fingertip at ~52% of the frame height, wrist at ~80% — so the
+  // node's box is nearly twice the size of the hand you can actually see, and the hand sits low
+  // inside it. Centring that box on a button therefore does NOT put the finger on the button: it
+  // drops the fingertip to the button's lower half and hangs the palm far below.
+  //
+  // Measured on the Part-2 and Part-4 Next buttons, whose centres sit at y=1016 in a 1080 stage:
+  // the hand's box spanned 876..1156 and its visible art 1021..1101, i.e. the palm was cut off 21px
+  // past the bottom edge and only the fingertip showed, over the button text. Exactly the report.
+  // (Part-3's Next sits at y=921 and was never clipped, which is why it only showed on two of the
+  // three Next buttons.)
+  //
+  // Fractions of the sprite frame occupied by the visible hand, measured off the art:
+  var HAND_ART = { top: 0.517, bottom: 0.802, left: 0.396, right: 0.623 };
+  var HAND_MARGIN = 14;     // keep the visible hand this far clear of the stage edge
+
+  // Where the final screen's Next button sits, in logical stage units (the stage is 1920x1080).
+  // Bottom-RIGHT corner with an even 60px margin on both edges. It is authored bottom-CENTRE deep
+  // inside Part 4, which is both hidden behind the final picture and the wrong place for it.
+  var FINAL_NEXT = { w: 300, h: 96, cx: 1710, cy: 972 };
+  // Put a pointing hand ON a target: the FINGERTIP lands on the target's centre, then the visible
+  // hand — not the mostly-empty box — is clamped inside the 1920x1080 stage, so the hand can never
+  // be cut off by the frame however close to an edge the target sits.
+  function placeTapHand(handId, targetId, offX, offY) {
+    var r = E.get(handId); if (!r || !targetId || !E.get(targetId)) return;
+    var tc = E.centerLogical(targetId);
+    // rendered size from the layout record (not getBoundingClientRect), so this is exact and does
+    // not depend on a live browser layout pass
+    var bw = (r._w || r.rt.sdX) * r.rt.sx, bh = (r._h || r.rt.sdY) * r.rt.sy;
+    if (!(bw > 0) || !(bh > 0)) { E.setStageLocalPos(r, tc.x, tc.y); return; }
+    // where the visible hand sits inside the box, as offsets from the box centre
+    var tipDX = ((HAND_ART.left + HAND_ART.right) / 2 - 0.5) * bw;
+    var tipDY = (HAND_ART.top - 0.5) * bh;
+    var botDY = (HAND_ART.bottom - 0.5) * bh;
+    var lDX = (HAND_ART.left - 0.5) * bw, rDX = (HAND_ART.right - 0.5) * bw;
+    // box centre that puts the fingertip on the target
+    var cx = tc.x - tipDX + (offX || 0), cy = tc.y - tipDY + (offY || 0);
+    var size = E.logicalSize();
+    cy = Math.min(cy, size.h - HAND_MARGIN - botDY);      // palm never past the bottom edge
+    cy = Math.max(cy, HAND_MARGIN - tipDY);               // fingertip never past the top edge
+    cx = Math.min(cx, size.w - HAND_MARGIN - rDX);
+    cx = Math.max(cx, HAND_MARGIN - lDX);
+    E.setStageLocalPos(r, cx, cy);
+  }
+  // Resting pose per button, captured the FIRST time it is ever animated and never re-read. Reading
+  // it back later would compound — a button caught mid-bump would adopt the bumped size as its new
+  // rest and drift bigger on every retry. This is the same trap the old one-off tryAgainScale
+  // capture existed to avoid; keeping it here means every button is protected, not just that one.
+  var BTN_REST = {};
+  function buttonRest(id) {
+    var r = E.get(id); if (!r) return null;
+    if (!BTN_REST[id]) {
+      var sx = r.rt.sx, sy = r.rt.sy;
+      BTN_REST[id] = { sx: sx > 0 ? sx : 1, sy: sy > 0 ? sy : 1, rot: r.rt.rot || 0, ay: r.rt.ay };
+    }
+    return BTN_REST[id];
+  }
+  // Damped spring over the active part of the period; 0 at both ends, so every cycle starts and
+  // finishes exactly at the resting pose and repeated loops can never accumulate an offset.
+  function bumpAt(e) {
+    if (e >= BUMP_ACTIVE) return 0;                              // the still beat between bumps
+    var u = e / BUMP_ACTIVE;
+    return Math.exp(-4.2 * u) * Math.sin(u * Math.PI * 2.4);
+  }
+  // Make a button look tappable. `session` is optional: pass a LevelSession so the loop is torn
+  // down with the level (the intro button has no session and is killed on click instead).
+  function makeTappable(id, session, delay) {
+    var rest = id && buttonRest(id); if (!rest) return;
+    E.kill(id);
+    E.get(id).el.classList.add("rb-tappable");          // state marker only — the hop is the cue
+    E.setPose(id, { ay: rest.ay, rot: rest.rot }); E.setScaleXY(id, rest.sx, rest.sy);
+    // prefers-reduced-motion: keep BOTH tones (light waiting / dark pressed — they are state, not
+    // decoration, and the child still needs to see which thing to press) but no looping motion.
+    if (E.reducedMotion()) return;
+    if (session) session.track(id);
+    // One tween writes both channels so they peak on the same frame and read as a single "boing" —
+    // the button lifts and swells together, then drops back. The authored rotation is left exactly
+    // as it is: the bump never touches it.
+    E.tween({
+      dur: BUMP_PERIOD, loops: -1, ease: "Linear", tag: id, delay: delay || 0,
+      fn: function (e) {
+        // HELD: sit perfectly still at the rest pose. A browser only fires `click` when pointerdown
+        // and pointerup land on the same element — so a button that keeps hopping out from under a
+        // finger that is already down can have its pointerup land outside itself, and the tap then
+        // does nothing at all. Freezing the hop for the duration of a press keeps the hit area put.
+        // (It also looks right: a button being pressed should not be bouncing at the same time.)
+        var rec = E.get(id);
+        if (rec && rec._pressT) {
+          E.setPose(id, { ay: rest.ay });
+          E.setScaleXY(id, rest.sx, rest.sy);
+          return;
+        }
+        var k = bumpAt(e);
+        E.setPose(id, { ay: rest.ay + BUMP_HOP * k });
+        E.setScaleXY(id, rest.sx * (1 + BUMP_SCALE * k), rest.sy * (1 + BUMP_SCALE * k));
+      }
+    });
+  }
+  // Settle a button back to its authored pose and drop the glow. Always safe to call.
+  function stopTappable(id) {
+    var r = id && E.get(id); if (!r) return;
+    E.kill(id);
+    r.el.classList.remove("rb-tappable");
+    r.el.classList.remove("pressed");                   // never leave a button stuck pushed down
+    E.setPressAmount(id, 0);
+    var rest = BTN_REST[id];
+    if (rest) { E.setPose(id, { ay: rest.ay, rot: rest.rot }); E.setScaleXY(id, rest.sx, rest.sy); }
+  }
   // An item must be the SAME size wherever it lands. Each level authors its own ghost marker and the
   // item used to be fitted to it, so the identical bell rendered 170x177 in Level 1 but 146x152 in
   // Level 2 (its marker is 146 wide) — the same object visibly shrinking between levels. The FIRST
@@ -283,7 +430,9 @@ var Controllers = (function () {
     for (var k = 1; k <= 8; k++) AUD[k] = aud(f["instruction" + k + "Audio"]);
     var featherLantern = aud(f.featherLanternAudio), wrongSFX = aud(f.wrongSFX), boxOpenSFX = aud(f.boxOpenSFX), finalAudio = aud(f.finalScreenAudio);
     // Sound for an item landing in the basket / wagon (Part 4). Data-driven, falling back to the
-    // level's sparkle clip so every level has one without hard-coding a path here.
+    // level's sparkle clip so every level has one without hard-coding a path here. This IS the
+    // authored magical star-burst chime and it stays exactly as it is — the interaction sounds
+    // added elsewhere are additions to silence, never replacements for a sound that already played.
     var dropSFX = aud(f.dropSFX) || boxOpenSFX;
     var INSTR = {}; for (var j = 1; j <= 8; j++) INSTR[j] = str(f["instruction" + j], "");
     var answerMode = num(f.answerMode, 0);
@@ -296,6 +445,11 @@ var Controllers = (function () {
     var ghostMoveDuration = num(f.ghostMoveDuration, 1.2), ghostDelayPart4 = num(f.ghostDelayPart4, 6);
     var nextHintDelay = num(f.nextButtonHintDelay, 12), part4HintDelay = num(f.part4HintDelay, 12);
     var ghostAlpha = num(f.ghostAlpha, 0.5);
+    // Optional authored override for the Part-2 name cues, in SECONDS from the start of the naming
+    // clip: fields.part2NameCues = { first: <sec>, second: <sec> }. Absent by default — the cues are
+    // measured from the clip itself (part2Cues). This exists so a re-recorded or re-paced voice-over
+    // can be re-synced from js/data.js by ear, without a code change.
+    var part2CueOverride = (f.part2NameCues && typeof f.part2NameCues === "object") ? f.part2NameCues : null;
 
     // per-level zones (scoped drop registry) resolved from baskets config
     function levelZones(part4) {
@@ -305,7 +459,7 @@ var Controllers = (function () {
     }
 
     // runtime state
-    var item1Orig, item2Orig, basketDef, trolleyDef, part3BallLeft = false;
+    var item1Orig, item2Orig, basketDef, trolleyDef;
     var placed3 = {};             // itemId -> { side:'left'|'right' }
     var placed4 = {};             // itemId -> true
     var wrongTokens = {};         // itemId -> int (invalidate stale wrong-drop restores)
@@ -314,10 +468,11 @@ var Controllers = (function () {
     var ghostToken = { alive: false };
     var confettiToken = { cancelled: false };
     var answerHintTimer = null, part4HintTimer = null, nextHintTimer = null, boxHintTimer = null;
+    var nextHintBtn = null;       // the Next button currently bumping (so it can be settled again)
     var disposers = [];           // click-listener disposers for this level
     var locks = {};               // transition locks
     var boxOpened = false;
-    var tryAgainScale = null;     // authored resting scale of the Try Again button (captured once)
+    var lastPart2Cue = null;      // last computed name-scroll cue (dev diagnostics only)
 
     function A(id, on) { if (id) E.setActive(id, on); }
     // Force every hint hand / ghost of THIS level off, killing any tween on it. Used at level start
@@ -414,6 +569,9 @@ var Controllers = (function () {
       // the letters across it (text finishes exactly when the voice does). Without this, a cold clip can
       // miss the 1.5s prepare window and the text falls back to a fixed speed -> out of sync with the VO.
       Object.keys(AUD).forEach(function (k) { if (AUD[k]) Audio.prepareNarration(AUD[k]); });
+      // The Part-2 naming line needs its TRUE length too — both name scrolls are cued from it (see
+      // part2Cues) — so its metadata must already be known when that part starts, not fetched then.
+      if (featherLantern) Audio.prepareNarration(featherLantern);
       // Warm every sprite this level's items can show (item + dropped, Part 3 + Part 4) as soon as the
       // level mounts. Each reveal awaits its own warm too; doing it here means those awaits are usually
       // already satisfied, and the natural sizes the seating maths needs are known before the first drop.
@@ -433,7 +591,11 @@ var Controllers = (function () {
       hideAllHints();
       A(ID.part2, false); A(ID.part3, false); A(ID.part4, false);
       A(ID.item3, false); A(ID.item4, false); A(ID.lanternText, false); A(ID.featherText, false);
-      A(ID.nextP2, false); A(ID.nextP3, false); A(ID.tryAgain, false);
+      // nextP4 belongs in this list too. Without it, a level that is replayed starts with its Part-4
+      // Next button already on screen — it is switched on when the stage is cleared and nothing ever
+      // switched it back off. It matters more now: on Level 4 that button has been re-hosted onto the
+      // level root and restyled as the gold button, so a replay showed it floating over Part 1.
+      A(ID.nextP2, false); A(ID.nextP3, false); A(ID.nextP4, false); A(ID.tryAgain, false);
       A(ID.arrow1, false); A(ID.arrow2, false);
       basketDef = ID.basket ? E.getAnchoredPos(ID.basket) : { x: 0, y: 0 };
       trolleyDef = ID.trolley ? E.getAnchoredPos(ID.trolley) : { x: 0, y: 0 };
@@ -458,7 +620,10 @@ var Controllers = (function () {
       // The box becomes tappable as soon as the instruction lands — only the HINT waits. (These two used
       // to be one step, which is why the box hand still appeared right away after the Tutorial: the 8s
       // idle rule had only been applied to the drag hand and the answer hand, not to this one.)
-      if (ID.boxButton) reg(E.onClick(ID.boxButton, guard("box", openBox), { key: "gm" }));
+      // press: "legacy" — the box is authored artwork, not a UI button, and it already has its own
+      // tap animation (the rigid box+lid wobble in openBox). It also must not dim on tap (QA §4/§7),
+      // so it keeps exactly the original brief shade and none of the game-button drop-and-squash.
+      if (ID.boxButton) reg(E.onClick(ID.boxButton, guard("box", openBox), { key: "gm", press: "legacy" }));
       boxHintTimer = S.setTimeout(showHint, (isFirstLevel ? 0 : IDLE_HINT_DELAY) * 1000);
     }
     function showHint() {
@@ -547,13 +712,98 @@ var Controllers = (function () {
       A(ID.item3, true); A(ID.item4, true);
       if (ID.item3) { S.track(ID.item3); E.setScale(ID.item3, 0); E.doScale(ID.item3, 1, 0.5, "OutBack"); }
       if (ID.item4) { S.track(ID.item4); E.setScale(ID.item4, 0); E.doScale(ID.item4, 1, 0.5, "OutBack"); }
-      if (featherLantern) Audio.startNarration(featherLantern);
-      await S.wait(0.6);
-      openScroll(ID.lanternText);      // first name unfurls as the VO says it
-      await S.wait(1.8);
-      openScroll(ID.featherText);      // second name unfurls as the VO names it
-      await S.wait(1.8);
+      // Resolve the naming clip's REAL length before starting it, so each scroll can be placed on the
+      // word the voice actually says. The metadata is warmed at level start (self.start), so this is
+      // already resolved in practice, and AudioManager caps the wait either way.
+      var dur = featherLantern ? await Audio.prepareNarration(featherLantern) : 0;
+      if (S.cancelled()) return;
+      await playNameScrolls(part2Cues(featherLantern, dur));
       A(ID.nextP2, true); showNextButtonHint(ID.nextP2);
+    }
+
+    // ---- Part-2 name cues: each scroll opens on the word the voice is saying ----
+    // Part 2 plays ONE line that names both items ("A lantern and a feather"), and the two scrolls
+    // used to unfurl on fixed waits — 0.6 s, then +1.8 s — counted from the moment play() was CALLED.
+    // That is wrong three separate ways:
+    //   1. play() is not when sound starts. Every other narration in this game runs off the "really
+    //      audible" gate (see typeText); Part 2 alone fired and forgot, so start-up latency shifted
+    //      the whole schedule — which is why the desync was sometimes early, sometimes late.
+    //   2. The waits are absolute, but the line is a different length on every level (measured:
+    //      2.91 s in Level 1, 3.10 s Tutorial, 3.17 s Level 4, 3.37 s Level 3, 3.57 s Level 2). One
+    //      fixed schedule cannot match five different clips.
+    //   3. The NAME only appears when the unfurl COMPLETES (openScroll reveals its text on complete),
+    //      so the readable word landed a further SCROLL_OPEN (0.7 s) late on top of everything else.
+    // Net effect, measured against the clips: the second name appeared 0.6-1.0 s after the voice had
+    // said it — in the Tutorial the word "feather" was spoken over 2.15-3.10 s and the scroll only
+    // read "Feather" at 3.10 s, i.e. as the clip ran out. Cues are now derived from the clip's true
+    // duration and each name's position inside the spoken line, and the unfurl is centred on the
+    // word's onset so the scroll is already opening as the word is heard and the name becomes
+    // readable while it is still being said. Data-driven: no per-level constants.
+    function scrollLabel(rootId) {
+      var tid = rootId && E.childByName(rootId, "Text (TMP)");
+      var r = tid && E.get(tid);
+      if (!r) return "";
+      var s = (r._tmp && r._tmp.text != null) ? r._tmp.text : (r._tmpInner ? r._tmpInner.textContent : "");
+      return String(s || "").trim();          // the authored labels carry stray spaces ("Feather ")
+    }
+    // Reconstruct the spoken line so each name's position within it can be measured. This project's
+    // voice-over files are named FROM their transcript ("A_crown_and_a_ribbon.mp3"), so when the file
+    // name really does contain both scroll labels IN ORDER we have the exact wording; otherwise we
+    // synthesise the line every recording follows. The filename is trusted only when it validates, so
+    // a clip named some other way can never yield nonsense cues — it just uses the synthesised line.
+    function spokenLine(clip, n1, n2) {
+      var syn = "a " + n1 + " and a " + n2;
+      var base = String(clip || "").split("/").pop().replace(/\.[a-z0-9]+$/i, "");
+      var txt = base.replace(/_+/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+      var i1 = txt.indexOf(n1), i2 = i1 < 0 ? -1 : txt.indexOf(n2, i1 + n1.length);
+      return (i1 >= 0 && i2 > i1) ? txt : syn;
+    }
+    function part2Cues(clip, dur) {
+      var n1 = scrollLabel(ID.lanternText).toLowerCase(), n2 = scrollLabel(ID.featherText).toLowerCase();
+      // The pre-fix schedule, kept ONLY for the cases there is nothing to measure against (no clip,
+      // no metadata, an unlabelled scroll) so this path can never be worse than what it replaces.
+      var fallback = { t1: 0.6, d1: SCROLL_OPEN, t2: 2.4, d2: SCROLL_OPEN, end: 4.2 };
+      if (!(dur > 0) || !n1 || !n2) return fallback;
+      var line = spokenLine(clip, n1, n2);
+      var i1 = line.indexOf(n1), i2 = i1 < 0 ? -1 : line.indexOf(n2, i1 + n1.length);
+      if (i1 < 0 || i2 < 0) return fallback;
+      var per = dur / line.length;                  // seconds per character of the spoken line
+      function cueFor(index, name, override) {
+        var spoken = name.length * per;             // how long that name is voiced for
+        // Unfurl no longer than the word itself, so the name is readable while it is still being
+        // said; floored so a short word ("bell") still gets a scroll motion worth seeing.
+        var d = Math.max(0.3, Math.min(SCROLL_OPEN, spoken * 0.7));
+        var onset = (typeof override === "number" && isFinite(override)) ? override : index * per;
+        // Start half an unfurl early so the motion straddles the word's onset and the name lands
+        // mid-word. Under prefers-reduced-motion the engine clamps every tween to 0.2s, so that
+        // pre-roll would instead make the name appear BEFORE its word — start on the onset there.
+        var lead = E.reducedMotion() ? 0 : d / 2;
+        return { at: Math.max(0, onset - lead), dur: d };
+      }
+      var ov = part2CueOverride || {};
+      var a = cueFor(i1, n1, ov.first), b = cueFor(i2, n2, ov.second);
+      // published through diagnostics so the sync can be READ in the browser (__RB.diag().part2)
+      // instead of judged by ear: "word" is when the voice says it, "readable" when the name shows.
+      lastPart2Cue = { line: line, clip: dur, names: [n1, n2],
+        word: [round2(i1 * per), round2(i2 * per)],
+        readable: [round2(a.at + a.dur), round2(Math.max(a.at, b.at) + b.dur)] };
+      return { t1: a.at, d1: a.dur, t2: Math.max(a.at, b.at), d2: b.dur, end: dur + 0.6 };
+    }
+    function round2(n) { return Math.round(n * 100) / 100; }
+    // Run the two reveals against the voice. The schedule starts on the frame the clip is REALLY
+    // audible — AudioManager's playing gate, which is capped, so blocked or silent audio can never
+    // stall Part 2 (the cues then simply run from the cap, exactly as the typed instructions do).
+    function playNameScrolls(cue) {
+      return new Promise(function (resolve) {
+        var begun = false;
+        var begin = function () {
+          if (begun || S.cancelled()) return; begun = true;
+          S.setTimeout(function () { openScroll(ID.lanternText, cue.d1); }, cue.t1 * 1000);
+          S.setTimeout(function () { openScroll(ID.featherText, cue.d2); }, cue.t2 * 1000);
+          S.setTimeout(resolve, cue.end * 1000);          // Next only after the line has finished
+        };
+        if (featherLantern) Audio.startNarration(featherLantern, begin); else begin();
+      });
     }
     // Unfurl a name scroll smoothly. The parchment, rollers and item-name text are authored
     // inactive, so the old popTrigger (root scale only) left the scroll closed with no name.
@@ -562,7 +812,7 @@ var Controllers = (function () {
     // rollers slide out from center to their authored ends, and the centered name fades in last.
     function openScroll(rootId, dur) {
       if (!rootId) return;
-      dur = dur || 0.7;
+      dur = dur || SCROLL_OPEN;      // cued per-name by part2Cues; SCROLL_OPEN is the authored default
       A(rootId, true);
       E.setSelfPaint(rootId, false);                 // hide the closed-scroll sprite (no duplicate)
       var txt = E.childByName(rootId, "Text (TMP)");
@@ -596,9 +846,13 @@ var Controllers = (function () {
       if (ID.part3) {
         var p3 = E.getAnchoredPos(ID.part3); S.track(ID.part3);
         E.setAnchoredPos(ID.part3, p3.x, p3.y - 500); E.setAlpha(ID.part3, 0); E.setScale(ID.part3, 0.95);
-        E.doAnchorPos(ID.part3, p3.x, p3.y, 1, "OutCubic", { delay: 1.1 });
-        E.doFade(ID.part3, 1, 1, "OutQuad", { delay: 1.1 });
-        E.doScale(ID.part3, 1, 1, "OutBack", { delay: 1.1, onComplete: function () { if (!S.cancelled()) part3Flow(); } });
+        // Part 3 used to wait 1.1s of NOTHING before it even began sliding in, then take a further
+        // 1.0s — so tapping Next bought 2.1s of dead screen before a word was spoken, on top of any
+        // art warming. The 1.1s existed to let Part 2 finish leaving; the two now OVERLAP instead,
+        // which is how the transition should have read anyway. 2.1s -> 1.05s.
+        E.doAnchorPos(ID.part3, p3.x, p3.y, 0.7, "OutCubic", { delay: 0.35 });
+        E.doFade(ID.part3, 1, 0.7, "OutQuad", { delay: 0.35 });
+        E.doScale(ID.part3, 1, 0.7, "OutBack", { delay: 0.35, onComplete: function () { if (!S.cancelled()) part3Flow(); } });
       } else part3Flow();
       if (ID.part2) { var p2 = E.getAnchoredPos(ID.part2); S.track(ID.part2); E.doAnchorPos(ID.part2, p2.x, p2.y - 350, 1, "InOutSine"); E.doFade(ID.part2, 0, 1, "OutQuad", { onComplete: function () { A(ID.part2, false); } }); }
     }
@@ -615,8 +869,10 @@ var Controllers = (function () {
       for (var it in placed3) { if (it !== exceptItem && placed3[it].zoneId === zoneId) return true; }
       return false;
     }
-    function returnItem3(itemId) { I.restoreOrigin(itemId); repaintItem(itemId, "item"); }
+    // released somewhere that isn't a pan: a low, soft blip so the child hears that nothing happened
+    function returnItem3(itemId) { Audio.playUI("nope"); I.restoreOrigin(itemId); repaintItem(itemId, "item"); }
     function placeOnPan(itemId, zone) {
+      Audio.playUI("place");        // it landed — Part 3 had no drop sound at all before
       placed3[itemId] = { side: zone.spec.isLeftBasket ? "left" : "right", zoneId: zone.id };
       I.setLocked(itemId, true); I.setEnabled(itemId, false);
       // Nestle the item INTO the pan's dish. The drop zone is a CHILD of the dish, so an item placed
@@ -708,8 +964,11 @@ var Controllers = (function () {
       return answerMode === 0 ? bookLighter : !bookLighter;        // mode 0 = lighter, 1 = heavier
     }
     function enableAnswerButtons() {
-      if (ID.bookAns) { E.setInteractable(ID.bookAns, true); reg(E.onClick(ID.bookAns, guardOnce("ans", function () { onAnswer(true); }), { key: "ans" })); }
-      if (ID.ballAns) { E.setInteractable(ID.ballAns, true); reg(E.onClick(ID.ballAns, guardOnce("ans", function () { onAnswer(false); }), { key: "ans" })); }
+      // press: false — these two "buttons" ARE the draggable item nodes sitting on the pans. They
+      // must never squash or darken under a finger: the answer feedback is the green/red glow, and
+      // the items are required to hold their exact size (QA §7). Every other button opts in.
+      if (ID.bookAns) { E.setInteractable(ID.bookAns, true); reg(E.onClick(ID.bookAns, guardOnce("ans", function () { onAnswer(true); }), { key: "ans", press: false })); }
+      if (ID.ballAns) { E.setInteractable(ID.ballAns, true); reg(E.onClick(ID.ballAns, guardOnce("ans", function () { onAnswer(false); }), { key: "ans", press: false })); }
     }
     // guardOnce: exactly one answer transition per prompt, released only on retry
     function guardOnce(name, fn) { return function () { if (locks[name]) return; locks[name] = true; fn(); }; }
@@ -718,8 +977,9 @@ var Controllers = (function () {
         if (part3AnswerSelected) return;
         var cb = correctIsBook();
         showHintOnButton(cb == null ? ID.bookAns : (cb ? ID.bookAns : ID.ballAns));
-        // same idle rule as the drag hand: the Tutorial helps quickly, later levels wait 8s of no input
-      }, (isFirstLevel ? answerHintDelay : IDLE_HINT_DELAY) * 1000);
+        // same idle rule as every other hand. The Tutorial's authored 5s is capped to it too, so
+        // the teaching level is never slower to help than the levels that follow it.
+      }, (isFirstLevel ? Math.min(answerHintDelay, IDLE_HINT_DELAY) : IDLE_HINT_DELAY) * 1000);
     }
     function showHintOnButton(btnId) {
       if (!ID.answerHint || !btnId) return;
@@ -759,6 +1019,10 @@ var Controllers = (function () {
     // dim the OTHER (non-chosen) item a little while the chosen one glows; restore on retry/next
     function dimItem(imgId, dim) { var r = imgId && E.get(imgId); if (r) E.setAlpha(imgId, dim ? 0.5 : 1); }
     async function wrongAnswerFlow(selectedBook) {
+      // A wrong Part-3 ANSWER used to be silent. It gets its own falling "uh-oh" rather than the
+      // Part-4 error clip, because tapping the wrong item and dropping into the wrong container are
+      // different mistakes and should not be indistinguishable by ear.
+      Audio.playUI("wrongTap");
       if (selectedBook) { showGlow(ID.bookImg, false); dimItem(ID.ballImg, true); }
       else { showGlow(ID.ballImg, false); dimItem(ID.bookImg, true); }
       // The retry appears WITH the "Oops!" text, not when the line (and the voice it is paced to) has
@@ -770,11 +1034,17 @@ var Controllers = (function () {
         A(ID.tryAgain, true);
         if (!ID.tryAgain) return;
         reg(E.onClick(ID.tryAgain, guard2("tryagain", onTryAgain), { key: "tryagain" }));
-        // resting scale is captured ONCE (from the authored value) — reading it back each time would
+        // resting pose is captured ONCE (from the authored value) — reading it back each time would
         // compound if the child pressed mid-pop, shrinking the button a little on every retry
-        if (tryAgainScale == null) tryAgainScale = E.getScale(ID.tryAgain) || 1;
+        var rest = buttonRest(ID.tryAgain);
         E.kill(ID.tryAgain); S.track(ID.tryAgain);
-        E.setScale(ID.tryAgain, 0); E.doScale(ID.tryAgain, tryAgainScale, 0.3, "OutBack");   // pop in: "press me"
+        // Pop in, THEN keep inviting the tap. The pop alone was the whole affordance before, so
+        // half a second later the one button that unlocks the items was indistinguishable from
+        // scenery — at the moment the child most needs to be shown the way out.
+        E.setScale(ID.tryAgain, 0);
+        E.doScale(ID.tryAgain, rest ? rest.sx : 1, 0.3, "OutBack", {
+          onComplete: function () { if (!S.cancelled()) makeTappable(ID.tryAgain, S, POP_SETTLE); }
+        });
       };
       typeText(INSTR[6], AUD[6], { onStart: function () { S.setTimeout(showRetry, 150); } });
     }
@@ -782,7 +1052,7 @@ var Controllers = (function () {
     function guard2(name, fn) { return function () { if (locks[name]) return; locks[name] = true; fn(function () { locks[name] = false; }); }; }
     function onTryAgain(release) {
       A(ID.tryAgain, false);
-      if (ID.tryAgain) { E.kill(ID.tryAgain); if (tryAgainScale != null) E.setScale(ID.tryAgain, tryAgainScale); }   // settle the pop
+      stopTappable(ID.tryAgain);      // settle the bump + drop the glow, back to the authored pose
       clearGlow(ID.bookImg); clearGlow(ID.ballImg);                   // remove glow + settle the pop
       dimItem(ID.bookImg, false); dimItem(ID.ballImg, false);         // restore the dimmed item to full
       repaintItem(ID.book, "dropped"); repaintItem(ID.ball, "dropped");
@@ -817,10 +1087,10 @@ var Controllers = (function () {
       placeHintArrow(ID.arrow2, lighter);   // arrow2 = Lighter (↑) -> over the lighter item, wherever it sits
     }
     async function correctAnswerFlow(selectedBook) {
+      Audio.playUI("correct");      // rising fifth — the only sound in the game that goes UP twice
       if (selectedBook) { showGlow(ID.bookImg, true); dimItem(ID.ballImg, true); }
       else { showGlow(ID.ballImg, true); dimItem(ID.bookImg, true); }
       await typeText(INSTR[7], AUD[7]);
-      part3BallLeft = !!(placed3[ID.ball] && placed3[ID.ball].side === "left");
       showMeasureHint();          // Heavier↓ / Lighter↑ arrows over the pans the child actually built
       await S.wait(1);
       A(ID.nextP3, true); showNextButtonHint(ID.nextP3);
@@ -828,7 +1098,9 @@ var Controllers = (function () {
 
     // ---------- PART 4 ----------
     function startPart4() { A(ID.nextP3, false); stopNextButtonHint(); DM.clear(); startPart4Delay(); }
-    async function startPart4Delay() { await S.wait(1); if (scaleCtrl) scaleCtrl.reset(); part4Flow(); }
+    // Was a flat 1s of nothing between tapping Next and Part 4 starting to appear. Same complaint as
+    // the Part-3 transition: the child has pressed a button and the screen does not answer.
+    async function startPart4Delay() { await S.wait(0.35); if (scaleCtrl) scaleCtrl.reset(); part4Flow(); }
     async function part4Flow() {
       A(ID.part3, false); A(ID.part4, true);
       // Part 4 drop targets are item-named nodes (e.g. "Lantern", "Feather") whose sprite would
@@ -885,7 +1157,7 @@ var Controllers = (function () {
       return function (pointer) {
         if (!isPart4Ready || placed4[itemId] || itemLocked4[itemId]) { I.restoreOrigin(itemId); return; }
         var zone = DM.findDrop(itemId, pointer.x, pointer.y);
-        if (!zone) { I.restoreOrigin(itemId); repaintItem(itemId, "item"); return; }
+        if (!zone) { Audio.playUI("nope"); I.restoreOrigin(itemId); repaintItem(itemId, "item"); return; }
         if (part4Correct(itemId, zone)) {
           placed4[itemId] = true;
           I.setLocked(itemId, true); I.setEnabled(itemId, false);
@@ -1005,10 +1277,40 @@ var Controllers = (function () {
     function checkPart4Completion() {
       if (allPlaced4()) {
         stopPart4Hint(); A(ID.messageBar, false); A(ID.base3, false); A(ID.base4, false);
-        // celebratory golden bursts from the basket + wagon themselves (not a corner effect)
-        levelZones(true).forEach(function (z) { confettiToken = { cancelled: false }; E.confettiBurst(z.id, confettiToken); });
+        // NO extra sound here. This runs in the same frame as the final drop, which has just played
+        // the authored magical chime — 2.81s of it — so anything added lands directly on top and you
+        // hear two celebrations at once. The chime IS the stage-clear sound; the stars are its
+        // picture. (A three-note fanfare used to fire here and was exactly that doubled sound.)
+        celebratePart4();
         part4CompleteFlow();
       }
+    }
+    // Golden bursts from the basket + wagon themselves (not a corner effect). This used to run as a
+    // one-liner inside checkPart4Completion and it went wrong in four separate ways, all landing on
+    // the single frame the stage was completing:
+    //   1. It fired on the SAME frame the instruction banner and both item cards were switched off,
+    //      so a layout change and 60 new absolutely-positioned elements hit one frame together.
+    //   2. The second container's position was measured AFTER the first container's 30 particles
+    //      were already in the document — a forced synchronous layout, i.e. classic layout thrash.
+    //   3. Every particle shared one lifetime from one start time, so the whole cloud blinked out
+    //      on a single frame instead of tapering away. That is the "cuts off abruptly".
+    //   4. `confettiToken` was REASSIGNED per container inside the loop, so the first burst's token
+    //      was orphaned: disposing the level could only ever cancel the last container's particles,
+    //      and the rest kept animating over the next screen.
+    // Now: one token for the whole celebration, every centre measured BEFORE anything is inserted,
+    // the first burst deferred to the next frame so the scene change has been painted first, and the
+    // containers staggered so 30 particles arrive at a time rather than 60 at once.
+    function celebratePart4() {
+      var zones = levelZones(true);
+      confettiToken = { cancelled: false };
+      var tok = confettiToken;
+      var spots = zones.map(function (z) { return E.confettiCenter(z.id); });   // measure, then write
+      var fire = function (i) {
+        if (i >= spots.length || tok.cancelled || S.cancelled()) return;
+        E.confettiBurst(null, tok, { at: spots[i] });
+        S.setTimeout(function () { fire(i + 1); }, 110);       // session-owned: dies with the level
+      };
+      requestAnimationFrame(function () { if (!tok.cancelled && !S.cancelled()) fire(0); });
     }
     async function part4CompleteFlow() {
       await S.wait(2);
@@ -1018,18 +1320,98 @@ var Controllers = (function () {
     async function showFinalScreen() {
       await S.wait(1);
       if (ID.finalScreen) A(ID.finalScreen, true);
-      if (ID.finalEffect) {
-        A(ID.finalEffect, true);
-        confettiToken = { cancelled: false };
-        // Golden stars burst ACROSS the scene (over the path), not from the bottom-left corner where
-        // the effect node is authored. Re-anchor the blast to a few spread points around centre so it
-        // celebrates over the whole final picture. confettiBurst reads the node's position each call.
-        [{ x: 620, y: 470 }, { x: 960, y: 380 }, { x: 1300, y: 470 }].forEach(function (pt) {
-          E.setStageLocalPos(E.get(ID.finalEffect), pt.x, pt.y);
-          E.confettiBurst(ID.finalEffect, confettiToken);
-        });
-      }
+      // Golden stars burst ACROSS the scene (over the path), not from the bottom-left corner where
+      // the effect node is authored. This had the same fault as the Part-4 celebration, three times
+      // over: it MOVED the effect node and then let confettiBurst re-measure it, so the loop ran
+      // write -> read -> write -> read -> write -> read, forcing three synchronous layouts with the
+      // previous burst's particles already in the document — on the very frame the final picture
+      // appeared. The three points are fixed stage coordinates, so they can simply be converted to
+      // client pixels up front: no node is moved, nothing is measured, and the bursts are staggered.
+      var pts = [{ x: 620, y: 470 }, { x: 960, y: 380 }, { x: 1300, y: 470 }];
+      var sr = E.stageRect(), sc = E.currentScale();
+      confettiToken = { cancelled: false };
+      var ftok = confettiToken;
+      var spots = pts.map(function (p) { return { x: sr.left + p.x * sc, y: sr.top + p.y * sc }; });
+      var pop = function (i) {
+        if (i >= spots.length || ftok.cancelled || S.cancelled()) return;
+        E.confettiBurst(null, ftok, { at: spots[i] });
+        S.setTimeout(function () { pop(i + 1); }, 130);
+      };
+      requestAnimationFrame(function () { if (!ftok.cancelled && !S.cancelled()) pop(0); });
       if (finalAudio) Audio.startNarration(finalAudio);
+      showFinalNext();
+    }
+    // The final screen was a DEAD END. `isLastLevel` short-circuits in part4CompleteFlow before the
+    // Next button is ever shown, so alone among all the completion screens it offered no forward
+    // affordance and — the reported bug — no idle hand at all, however long the child waited.
+    //
+    // The button also cannot just be switched on where it is authored. It lives deep inside the
+    // Part-4 subtree, while the final screen is a DIRECT child of the level root and therefore a
+    // LATER sibling: the full-screen picture paints straight over it, so activating it in place
+    // would show nothing. It is re-hosted onto the level root above the final screen — the same
+    // trick the ghost hand already uses to survive a part change — with reparentKeepWorld so it
+    // does not jump on the way.
+    function showFinalNext() {
+      var btn = ID.nextP4, r = btn && E.get(btn);
+      var fs = ID.finalScreen && E.get(ID.finalScreen);
+      if (!r || !fs || !fs.parent) return;
+      A(btn, true);
+      E.reparent(btn, fs.parent.id);          // above the full-screen picture (it is a later sibling)
+      E.setAsLastSibling(btn);
+      makeMagicButton(btn, "Next");           // CSS gold button, not the blue sprite
+      E.setSizeDelta(btn, FINAL_NEXT.w, FINAL_NEXT.h);
+      E.setStageLocalPos(r, FINAL_NEXT.cx, FINAL_NEXT.cy);
+      reg(E.onClick(btn, guard("finish", finishGame), { key: "finish" }));
+      showNextButtonHint(btn);          // hops immediately, hand after IDLE_HINT_DELAY — as everywhere
+    }
+    // Turn a plain button node into the CSS gold button. Reusing the NODE rather than dropping a
+    // floating DOM element on the page is the whole point: it stays inside the 1920x1080 stage, so
+    // it scales with every other screen size and inherits the hop, the press and the hand hint that
+    // every other button already has — none of that has to be rebuilt for this one screen.
+    function makeMagicButton(id, label) {
+      var r = E.get(id); if (!r) return;
+      E.setSelfPaint(id, false);              // drop the authored sprite AND block any deferred repaint
+      // setSelfPaint pins those two inline properties to hide the sprite; clearing them hands the
+      // paint back to the stylesheet (an inline value would beat the class and leave it invisible).
+      r.el.style.backgroundImage = ""; r.el.style.backgroundColor = "";
+      r.el.classList.add("rb-magic-btn");
+      // The travelling border light. An SVG outline is used because a rounded pill has no honest
+      // CSS way to run a line around its edge (see the note in style.css); the two rects share one
+      // path — a faint continuous border, and a short bright arc that circles it.
+      if (!r._magicRim) {
+        try {
+          var NS = "http://www.w3.org/2000/svg";
+          var svg = document.createElementNS(NS, "svg");
+          svg.setAttribute("class", "rb-magic-rim");
+          svg.setAttribute("viewBox", "0 0 " + FINAL_NEXT.w + " " + FINAL_NEXT.h);
+          ["rb-rim-base", "rb-rim-arc"].forEach(function (cls) {
+            var rect = document.createElementNS(NS, "rect");
+            rect.setAttribute("class", cls);
+            rect.setAttribute("x", "1.5"); rect.setAttribute("y", "1.5");
+            rect.setAttribute("width", FINAL_NEXT.w - 3); rect.setAttribute("height", FINAL_NEXT.h - 3);
+            rect.setAttribute("rx", (FINAL_NEXT.h - 3) / 2);      // fully rounded: a stadium
+            svg.appendChild(rect);
+          });
+          r.el.appendChild(svg);
+          r._magicRim = svg;
+        } catch (e) {}                    // no SVG (headless QA shim): the button still works
+      }
+      if (!r._magicLabel) {
+        var lab = document.createElement("div");
+        lab.className = "rb-magic-label";
+        lab.textContent = label;
+        r.el.appendChild(lab);
+        r._magicLabel = lab;
+      }
+    }
+    // There is no level after this one, so the button reports completion to whatever is hosting the
+    // game rather than jumping anywhere. Both channels are no-ops standalone, which is why this is a
+    // documented hook and not an invented navigation: a host page can listen for the event or define
+    // window.RB_ON_FINISH. Without a host the button still settles and stops inviting taps.
+    function finishGame() {
+      stopNextButtonHint();
+      try { window.dispatchEvent(new CustomEvent("royalbloom:finished", { detail: { level: host } })); } catch (e) {}
+      try { if (typeof window.RB_ON_FINISH === "function") window.RB_ON_FINISH(host); } catch (e) {}
     }
     function startSmartGhostP4() {
       stopGhost();
@@ -1061,7 +1443,9 @@ var Controllers = (function () {
       // its authored delay). After the Tutorial the child is expected to try it themselves, so the hand
       // only comes out once they have been IDLE for IDLE_HINT_DELAY. Any drag stops it (onDragStarted ->
       // stopGhost) and the next unfinished step re-arms it, so the wait restarts after each interaction.
-      var delay = isFirstLevel ? (isPart4 ? ghostDelayPart4 : 1) : IDLE_HINT_DELAY;
+      // capped so no level can author a longer wait than the rule allows — Level 1 authors 12s for
+      // its Part-4 ghost, which used to be harmless only because it isn't the first level.
+      var delay = isFirstLevel ? (isPart4 ? Math.min(ghostDelayPart4, IDLE_HINT_DELAY) : 1) : IDLE_HINT_DELAY;
       ghostToken = { alive: true };
       var tok = ghostToken;
       S.setTimeout(function () {
@@ -1116,6 +1500,9 @@ var Controllers = (function () {
     // hint now. hideHint stays — the flow uses it to guarantee those nodes are never on screen.
     function hideHint(hintId) { if (!hintId) return; E.kill(hintId); A(hintId, false); }
     function showNextButtonHint(btnId) {
+      // The button reads as tappable from the moment it appears; the HAND is still the idle hint
+      // that waits out IDLE_HINT_DELAY. Two different jobs: "this is pressable" vs "you seem stuck".
+      if (btnId) { makeTappable(btnId, S); nextHintBtn = btnId; }
       nextHintTimer = S.setTimeout(function () {
         // isInteractableInTree, NOT isActive: the hint hand (n519_hand) is a CANVAS-ROOT node shared
         // by every level, so it shows regardless of which level is on screen. isActive only checks the
@@ -1123,22 +1510,34 @@ var Controllers = (function () {
         // God Mode screen jump) still reads active, and this timer would park a hand over another level.
         if (!btnId || !E.isInteractableInTree(btnId) || !ID.nextHint) return;
         A(ID.nextHint, true); S.track(ID.nextHint);
-        var bc = E.centerLogical(btnId); E.setStageLocalPos(E.get(ID.nextHint), bc.x, bc.y); E.setScale(ID.nextHint, 0.7);
+        // scale FIRST, then place: placeTapHand measures the hand at its rendered size, and the
+        // fingertip/clamp maths is meaningless against an unscaled 400x400 box.
+        E.setScale(ID.nextHint, 0.7);
+        placeTapHand(ID.nextHint, btnId);
         E.setAlpha(ID.nextHint, 0); E.doFade(ID.nextHint, 1, GHOST_FADE, "OutQuad", { onComplete: function () {
           E.doFade(ID.nextHint, 0.55, 0.8, "InOutSine", { loops: -1, yoyo: true });   // then breathe, gently
         } });
-        // the fourth and last hint family on the same idle rule as the others. The Tutorial keeps its
-        // authored delay but capped at IDLE_HINT_DELAY: it was 12s, i.e. the teaching level made the
-        // child wait LONGER for a hand than Level 1 does. No hand anywhere now takes more than 8s.
+        // The hand QA reported: on a completion screen the child has already done the work and is
+        // only waiting to be told how to go on, so a long pause reads as the game having stopped.
+        // The Tutorial's authored 12s is capped to the same 3s ceiling — the teaching level used to
+        // make the child wait the LONGEST of all for this hand.
       }, (isFirstLevel ? Math.min(nextHintDelay, IDLE_HINT_DELAY) : IDLE_HINT_DELAY) * 1000);
       if (btnId) reg(E.onClick(btnId, stopNextButtonHint, { key: "nexthint" }));
     }
-    function stopNextButtonHint() { if (nextHintTimer) { S.clearTimeout(nextHintTimer); nextHintTimer = null; } if (ID.nextHint) { E.kill(ID.nextHint); A(ID.nextHint, false); } }
+    function stopNextButtonHint() {
+      if (nextHintTimer) { S.clearTimeout(nextHintTimer); nextHintTimer = null; }
+      if (ID.nextHint) { E.kill(ID.nextHint); A(ID.nextHint, false); }
+      if (nextHintBtn) { stopTappable(nextHintBtn); nextHintBtn = null; }   // never leave a button mid-bump
+    }
 
     // ---------- teardown ----------
     self.dispose = function () {
       confettiToken.cancelled = true;
       stopGhost(); stopPart4Hint(); stopAnswerHint(); stopNextButtonHint();
+      // A level can be left with a button mid-bump (Next is pressed while it is bumping). Settle
+      // every button this level animates back to its authored pose, so a replay never inherits a
+      // scaled/tilted button — the pose is restored from BTN_REST, so this is exact, not a guess.
+      [ID.tryAgain, ID.nextP2, ID.nextP3, ID.nextP4].forEach(stopTappable);
       hideAllHints();                 // nothing of this level may be left on screen (the Next hint hand is shared)
       Audio.stopNarration();
       DM.clear();
@@ -1147,7 +1546,7 @@ var Controllers = (function () {
       if (S) { S.dispose(); }
     };
     self.diagnostics = function () {
-      return { host: host, ready4: isPart4Ready, placed3: Object.keys(placed3).length, placed4: Object.keys(placed4).length, timers: S ? S.timerCount() : 0, answerMode: answerMode, activeZones: DM.activeIds() };
+      return { host: host, ready4: isPart4Ready, placed3: Object.keys(placed3).length, placed4: Object.keys(placed4).length, timers: S ? S.timerCount() : 0, answerMode: answerMode, activeZones: DM.activeIds(), part2: lastPart2Cue };
     };
 
     return self;
@@ -1170,88 +1569,29 @@ var Controllers = (function () {
   }
 
   // ---- ButtonAnimator (intro "Let's Go") ----
-  /* THE TITLE-CARD -> GAMEPLAY HANDOVER — must never show a bare stage between the
-     two screens.
-     The old sequence could. It faded the intro DOWN and activated the gameplay panel
-     in the SAME tick, so the only thing covering the empty stage was the panel
-     happening to paint in time. Usually it did: the panel is a later sibling, so it
-     covers the intro on the very next frame — which also meant the intro's fade was
-     never actually seen, making this a hard cut rather than the cross-fade the code
-     reads like. But the panel's sprites are painted lazily, AT activation (see
-     maybePaint/paintDeferredIn in engine.js), so whenever that art was not already
-     decoded the same tick left a fading title card over the dark #14101f stage —
-     the blank/black flash.
-     So the handover is inverted and strictly ordered:
-       1. start warming the gameplay screen's art the moment the button is tapped, so
-          the fetch overlaps the beat below instead of following it;
-       2. mount the panel at alpha 0 — activating it is what paints its sprites, so it
-          decodes while invisible rather than in front of the reader;
-       3. fade the panel UP while the intro stays FULLY OPAQUE underneath it;
-       4. only once the panel is solid, deactivate the intro.
-     At every instant there is an opaque screen on top, so no frame can show the
-     stage through — the blank state is impossible by construction, not by timing.
-     The intro is deliberately NOT faded out any more: two half-transparent screens
-     would let the dark stage show BETWEEN them, which is the very artefact this
-     exists to remove. */
-  var HANDOVER_S    = 0.4;    // cross-fade duration (was the intro's fade-out time)
-  var HANDOVER_WARM_MS = 700; // …but never wait longer than this for the art to warm
   function ButtonAnimator(cfg, introId, onActivateLevel) {
     var btnId = nid(cfg.goButton), panelId = nid(cfg.gameplayPanel);
     var clip = cfg.clip && typeof cfg.clip === "string" ? cfg.clip : null;
     if (panelId) E.setActive(panelId, false);
     if (!btnId) return;
+    // The intro button is left EXACTLY as it was authored: its own 0.8 <-> 1.0 breathe, and the
+    // original brief shade on click (press: "legacy" below). None of the in-game button treatment
+    // — no hop, no drop-and-squash press — is applied here.
     E.setScale(btnId, 1);
     E.doScale(btnId, 1, 1, "InOutSine", { from: 0.8, loops: -1, yoyo: true });
     var done = false;
     E.ariaLabel(btnId, "Let's Go");
-
-    // Resolves when the gameplay screen's sprites are decoded, or when
-    // HANDOVER_WARM_MS is up — whichever comes first. A slow asset must delay the
-    // handover a little, never hold the tap hostage: the cross-fade below is safe
-    // either way, because the intro stays up until the panel is opaque.
-    function warmPanelArt() {
-      if (!panelId) return Promise.resolve();
-      var warm;
-      try { warm = E.preloadSprites([panelId]); } catch (e) { return Promise.resolve(); }
-      return Promise.race([
-        Promise.resolve(warm),
-        new Promise(function (res) { setTimeout(res, HANDOVER_WARM_MS); })
-      ]);
-    }
-
-    function handOver() {
-      if (!panelId) {                         // nothing to hand over to
-        if (introId) E.setActive(introId, false);
-        return;
-      }
-      if (!introId) {                         // no title card underneath -> a fade would
-        E.setAlpha(panelId, 1);               // start from the dark stage, so just show it
-        E.setActive(panelId, true);
-        if (onActivateLevel) onActivateLevel(panelId);
-        return;
-      }
-      E.setAlpha(panelId, 0);                 // mount INVISIBLE: paints + decodes unseen
-      E.setActive(panelId, true);             // (this is what triggers paintDeferredIn)
-      if (onActivateLevel) onActivateLevel(panelId);
-      E.doFade(panelId, 1, HANDOVER_S, "OutQuad", {
-        onComplete: function () {
-          E.setAlpha(panelId, 1);             // land exactly on opaque
-          E.setActive(introId, false);        // …and only now retire the title card
-        }
-      });
-    }
-
     E.onClick(btnId, function () {
       if (done) return; done = true;                 // transition lock: one activation only
       if (clip) Audio.playSFX(clip);
       E.kill(btnId);
       E.setInteractable(btnId, false);
-      var warm = warmPanelArt();                     // starts NOW, overlaps the delay below
       setTimeout(function () {
         E.setActive(btnId, false);
-        warm.then(handOver, handOver);                // a warm failure must not strand the tap
+        if (introId) E.doFade(introId, 0, 0.4, "OutQuad", { onComplete: function () { E.setActive(introId, false); } });
+        if (panelId) { E.setActive(panelId, true); if (onActivateLevel) onActivateLevel(panelId); }
       }, (cfg.delay || 0.3) * 1000);
-    }, { key: "letsgo" });
+    }, { key: "letsgo", press: "legacy" });
   }
 
   return {

@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Royal Bloom Fix Report</title>
+<style>
+  :root {
+    --ground:   #F6F7F9;
+    --surface:  #FFFFFF;
+    --raised:   #FBFCFD;
+    --ink:      #161A21;
+    --ink-soft: #4B5462;
+    --muted:    #79838F;
+    --line:     #E3E7EC;
+    --line-2:   #CDD4DC;
+    --accent:   #C57A08;
+    --accent-b: #F3E4C6;
+    --bad:      #BE3D33;
+    --bad-b:    #F6DEDB;
+    --good:     #1B7A50;
+    --good-b:   #D8EDE3;
+    --shadow:   0 1px 2px rgba(20,26,36,.05), 0 8px 24px -12px rgba(20,26,36,.18);
+
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, monospace;
+  }
+  :root:not([data-theme="light"]) {
+    @media (prefers-color-scheme: dark) {
+      --ground:   #101318;
+      --surface:  #171B22;
+      --raised:   #1D222B;
+      --ink:      #E8ECF2;
+      --ink-soft: #AEB7C4;
+      --muted:    #8B95A3;
+      --line:     #262C36;
+      --line-2:   #343C48;
+      --accent:   #EBAA3E;
+      --accent-b: #3A2E17;
+      --bad:      #F07165;
+      --bad-b:    #3B211E;
+      --good:     #4FC891;
+      --good-b:   #163027;
+      --shadow:   0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.6);
+    }
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:   #101318;
+      --surface:  #171B22;
+      --raised:   #1D222B;
+      --ink:      #E8ECF2;
+      --ink-soft: #AEB7C4;
+      --muted:    #8B95A3;
+      --line:     #262C36;
+      --line-2:   #343C48;
+      --accent:   #EBAA3E;
+      --accent-b: #3A2E17;
+      --bad:      #F07165;
+      --bad-b:    #3B211E;
+      --good:     #4FC891;
+      --good-b:   #163027;
+      --shadow:   0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:   #101318;
+    --surface:  #171B22;
+    --raised:   #1D222B;
+    --ink:      #E8ECF2;
+    --ink-soft: #AEB7C4;
+    --muted:    #8B95A3;
+    --line:     #262C36;
+    --line-2:   #343C48;
+    --accent:   #EBAA3E;
+    --accent-b: #3A2E17;
+    --bad:      #F07165;
+    --bad-b:    #3B211E;
+    --good:     #4FC891;
+    --good-b:   #163027;
+    --shadow:   0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.6);
+  }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 56px 24px 96px; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  h1 {
+    font-size: clamp(30px, 5vw, 46px); line-height: 1.1; letter-spacing: -.022em;
+    font-weight: 700; text-wrap: balance; margin: 10px 0 0;
+  }
+  .lede { color: var(--ink-soft); font-size: 18px; max-width: 62ch; margin-top: 14px; }
+
+  header.top { border-bottom: 1px solid var(--line); padding-bottom: 30px; }
+  .meta {
+    display: flex; flex-wrap: wrap; gap: 8px 28px; margin-top: 20px;
+    font-family: var(--mono); font-size: 12.5px; color: var(--muted);
+  }
+  .meta b { color: var(--ink-soft); font-weight: 500; }
+
+  /* ---- honesty notice: the most important block on the page ---- */
+  .notice {
+    margin-top: 30px; border: 1px solid var(--line-2); border-left: 3px solid var(--accent);
+    background: var(--surface); border-radius: 3px; padding: 20px 22px;
+  }
+  .notice h2 { font-size: 15px; letter-spacing: -.01em; margin: 0 0 8px; }
+  .notice p { color: var(--ink-soft); font-size: 14.5px; margin: 0 0 8px; max-width: 70ch; }
+  .notice p:last-child { margin-bottom: 0; }
+
+  /* ---- summary strip ---- */
+  .strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px;
+           background: var(--line); border: 1px solid var(--line); border-radius: 3px;
+           margin-top: 30px; overflow: hidden; }
+  .stat { background: var(--surface); padding: 16px 18px; }
+  .stat .n { font-family: var(--mono); font-size: 26px; font-weight: 600; letter-spacing: -.02em;
+             font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .stat .k { font-family: var(--mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase;
+             color: var(--muted); margin-top: 6px; }
+  .stat.warn .n { color: var(--bad); }
+  .stat.ok .n { color: var(--good); }
+
+  h2.sec {
+    font-size: 13px; font-family: var(--mono); letter-spacing: .14em; text-transform: uppercase;
+    color: var(--muted); font-weight: 500;
+    margin: 56px 0 18px; padding-bottom: 10px; border-bottom: 1px solid var(--line);
+  }
+
+  /* ---- bug entries ---- */
+  .bug { background: var(--surface); border: 1px solid var(--line); border-radius: 4px;
+         box-shadow: var(--shadow); margin-bottom: 18px; overflow: hidden; }
+  .bug > .head { display: flex; gap: 16px; align-items: baseline; padding: 20px 22px 0; }
+  .bug .num { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--accent);
+              letter-spacing: .08em; flex: none; padding-top: 4px; }
+  .bug h3 { font-size: 19px; letter-spacing: -.015em; margin: 0; text-wrap: balance; }
+  .bug .body { padding: 14px 22px 22px 22px; }
+  @media (min-width: 640px) { .bug .body { padding-left: 60px; } }
+
+  .row { margin-top: 16px; }
+  .row .lbl { font-family: var(--mono); font-size: 10.5px; letter-spacing: .12em;
+              text-transform: uppercase; color: var(--muted); margin-bottom: 5px; }
+  .row p { margin: 0; color: var(--ink-soft); font-size: 15px; max-width: 72ch; }
+  .row p + p { margin-top: 8px; }
+  code { font-family: var(--mono); font-size: .88em; background: var(--raised);
+         border: 1px solid var(--line); border-radius: 3px; padding: 1px 5px; color: var(--ink); }
+
+  .fixed { color: var(--good); font-weight: 600; }
+  .broke { color: var(--bad); font-weight: 600; }
+
+  /* ---- measurement table ---- */
+  .scroller { overflow-x: auto; margin-top: 10px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 460px; }
+  th, td { text-align: left; padding: 8px 14px 8px 0; border-bottom: 1px solid var(--line); }
+  th { font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+       color: var(--muted); font-weight: 500; }
+  td { font-variant-numeric: tabular-nums; color: var(--ink-soft); }
+  td.n { font-family: var(--mono); }
+  tbody tr:last-child td { border-bottom: none; }
+
+  /* ---- timeline chart (bug 1) ---- */
+  .tl { margin-top: 14px; display: grid; gap: 9px; }
+  .tl-row { display: grid; grid-template-columns: 74px 1fr; gap: 12px; align-items: center; }
+  .tl-name { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+  .tl-track { position: relative; height: 26px; background: var(--raised);
+              border: 1px solid var(--line); border-radius: 2px; }
+  .tl-word { position: absolute; top: 0; bottom: 0; background: var(--accent-b);
+             border-left: 1px solid var(--accent); border-right: 1px solid var(--accent); }
+  .tl-mark { position: absolute; top: -3px; bottom: -3px; width: 2px; }
+  .tl-mark.old { background: var(--bad); }
+  .tl-mark.new { background: var(--good); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 12px;
+            font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .legend i { display: inline-block; width: 10px; height: 10px; margin-right: 6px;
+              vertical-align: -1px; border-radius: 1px; }
+
+  /* ---- checklist ---- */
+  ul.check { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  ul.check li { display: grid; grid-template-columns: 22px 1fr; gap: 10px;
+                padding: 9px 0; border-bottom: 1px solid var(--line);
+                font-size: 15px; color: var(--ink-soft); }
+  ul.check li:last-child { border-bottom: none; }
+  ul.check .box { width: 15px; height: 15px; border: 1.5px solid var(--line-2);
+                  border-radius: 3px; margin-top: 4px; }
+  ul.check b { color: var(--ink); font-weight: 600; }
+
+  /* ---- live comparison panels ---- */
+  .cap { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+         margin-bottom: 7px; }
+  .cap.bad { color: var(--bad); } .cap.good { color: var(--good); }
+
+  .playbtn {
+    font: 500 14px var(--sans); color: var(--ink); background: var(--raised);
+    border: 1px solid var(--line-2); border-radius: 999px; padding: 9px 20px; cursor: pointer;
+  }
+  .playbtn:hover { border-color: var(--accent); color: var(--accent); }
+  .playbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .btnstage { position: relative; width: 360px; height: 120px; background: var(--raised);
+              border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+  .btnimg { position: absolute; left: 12px; top: 22px; width: 335px; height: 56px; }
+  .btnimg.pressed { filter: brightness(.80) saturate(.94) contrast(1.05);
+                    transform: translateY(5px) scale(1.015, .93); }
+
+  /* the real bump: a damped spring sampled at its actual values from controllers.js */
+  @keyframes rb-demo-hop {
+    0%    { transform: translateY(0)      scale(1); }
+    2%    { transform: translateY(-4.8px) scale(1.073); }
+    4.2%  { transform: translateY(-6.4px) scale(1.097); }
+    6.7%  { transform: translateY(-5.2px) scale(1.078); }
+    10%   { transform: translateY(-1.9px) scale(1.029); }
+    13.3% { transform: translateY(0.4px)  scale(.994); }
+    16.7% { transform: translateY(1.1px)  scale(.983); }
+    20%   { transform: translateY(0.8px)  scale(.988); }
+    23.3% { transform: translateY(0.2px)  scale(.997); }
+    30%   { transform: translateY(0)      scale(1); }
+    100%  { transform: translateY(0)      scale(1); }
+  }
+  .btnimg.hop { animation: rb-demo-hop 1.5s linear infinite; transform-origin: 50% 50%; }
+
+  /* the idle wait, both on one 9s loop so the gap is visible */
+  .waithand { position: absolute; left: 150px; width: 168px; height: 168px; top: 8px; opacity: 0; }
+  @keyframes rb-wait-8 { 0%,88.8% { opacity: 0; } 93%,100% { opacity: .95; } }
+  @keyframes rb-wait-3 { 0%,33.3% { opacity: 0; } 37%,100% { opacity: .95; } }
+  .waithand.slow { animation: rb-wait-8 9s linear infinite; }
+  .waithand.fast { animation: rb-wait-3 9s linear infinite; }
+
+  /* the shipped gold button, scaled 1:4 with the stage */
+  .goldbtn {
+    position: absolute; left: 390px; top: 231px; width: 75px; height: 24px;
+    display: flex; align-items: center; justify-content: center; isolation: isolate;
+    border-radius: 999px;
+    background: linear-gradient(180deg, #ffdd8a 0%, #ffc44d 50%, #f7a81c 100%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.8), inset 0 -2px 0 rgba(176,102,8,.35),
+                0 2px 0 #cd8410, 0 3px 5px rgba(74,41,0,.3);
+  }
+  .goldbtn span { position: relative; z-index: 1; font-family: var(--sans); font-weight: 700;
+                  font-size: 11px; color: #6d3c05; text-shadow: 0 1px 0 rgba(255,255,255,.6); }
+  .goldrim { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .goldrim rect { fill: none; stroke-linecap: round; }
+  .rimbase { stroke: rgba(255,246,205,.55); stroke-width: 6; }
+  .rimarc  { stroke: #fffae0; stroke-width: 9; stroke-dasharray: 100 600;
+             animation: rb-rim-travel 2.9s linear infinite; }
+  @keyframes rb-rim-travel { to { stroke-dashoffset: -700; } }
+
+  .pcanvas { display: block; background: var(--raised); border: 1px solid var(--line);
+             border-radius: 3px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .btnimg.hop, .waithand.slow, .waithand.fast, .rimarc { animation: none; }
+    .waithand { opacity: .95; }
+  }
+
+  footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--line);
+           color: var(--muted); font-size: 13.5px; }
+  footer code { font-size: 12.5px; }
+  a { color: var(--accent); }
+</style>
+
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="eyebrow">Royal Bloom · QA round · 5 commits</div>
+    <h1>Eleven reported bugs, and twelve more found on the way</h1>
+    <p class="lede">What each bug actually was, the measurement that proves it, and where the fix
+      lives. Every number below was taken from the project's own audio files and layout data.</p>
+    <div class="meta">
+      <span><b>Head</b> b2e0aba · pushed</span>
+      <span><b>Branch</b> main · local = origin</span>
+      <span><b>Files</b> 8 changed · +948 −80</span>
+      <span><b>Untouched</b> data.js · artwork · audio</span>
+    </div>
+  </header>
+
+  <section class="notice">
+    <h2>About the evidence on this page</h2>
+    <p><strong>There are no screenshots here, and that is deliberate.</strong> The fixes were authored
+      in an environment with no browser and no Node runtime, so the game was never rendered. Any
+      screenshot on this page would have been fabricated rather than captured.</p>
+    <p>What is here instead is measurement: clip durations read from the Vorbis headers of your own
+      audio files, node geometry read from <code>js/data.js</code>, and arithmetic against the
+      1920×1080 stage. Those numbers are real and reproducible.</p>
+    <p>There are two different claims on this page, and they should not be read as one.
+      <strong>“Shipped” is confirmed</strong> — each change was read back out of
+      <code>origin/main</code> after the push, so the code described here is genuinely what is on the
+      branch. <strong>“Works” is not confirmed.</strong>
+      <code>scripts/check-all.mjs</code> and <code>qa/smoke-test.mjs</code> have never been run against
+      it and the game has never been rendered, so nothing below has been seen behaving correctly.</p>
+    <p>The checklist at the bottom is the work that still has to happen on a real device. Until it is
+      done, treat every entry here as <em>a defect correctly diagnosed and a fix correctly written</em>
+      — not as a fix proven to work.</p>
+  </section>
+
+  <div class="strip">
+    <div class="stat ok"><div class="n">23</div><div class="k">Bugs fixed</div></div>
+    <div class="stat ok"><div class="n">23</div><div class="k">Shipped to main</div></div>
+    <div class="stat warn"><div class="n">0</div><div class="k">Runtime verified</div></div>
+    <div class="stat warn"><div class="n">2</div><div class="k">Gates unrun</div></div>
+  </div>
+
+  <h2 class="sec">The eight you reported</h2>
+
+  <!-- 1 -->
+  <article class="bug">
+    <div class="head"><div class="num">BUG 1</div>
+      <h3>Narration out of sync with the item-name scrolls</h3></div>
+    <div class="body">
+      <div class="row"><div class="lbl">Root cause</div>
+        <p>Both name scrolls opened on fixed waits — 0.6 s, then +1.8 s — counted from the moment
+          <code>play()</code> was <em>called</em>. Three faults compounded: <code>play()</code> is not
+          when sound starts; the waits are absolute but the naming line is a different length on every
+          level; and the name only becomes readable when the unfurl <em>completes</em>, a further
+          0.7 s later.</p></div>
+
+      <div class="row"><div class="lbl">Measured — when the second name became readable</div>
+        <div class="tl">
+          <div class="tl-row"><div class="tl-name">Tutorial</div><div class="tl-track">
+            <div class="tl-word" style="left:59.8%;right:13.9%"></div>
+            <div class="tl-mark old" style="left:86.1%"></div>
+            <div class="tl-mark new" style="left:68.9%"></div></div></div>
+          <div class="tl-row"><div class="tl-name">Level 1</div><div class="tl-track">
+            <div class="tl-word" style="left:63.8%;right:19.2%"></div>
+            <div class="tl-mark old" style="left:86.1%"></div>
+            <div class="tl-mark new" style="left:69.7%"></div></div></div>
+          <div class="tl-row"><div class="tl-name">Level 2</div><div class="tl-track">
+            <div class="tl-word" style="left:58.6%;right:0.8%"></div>
+            <div class="tl-mark old" style="left:86.1%"></div>
+            <div class="tl-mark new" style="left:68.3%"></div></div></div>
+          <div class="tl-row"><div class="tl-name">Level 3</div><div class="tl-track">
+            <div class="tl-word" style="left:65.6%;right:6.4%"></div>
+            <div class="tl-mark old" style="left:86.1%"></div>
+            <div class="tl-mark new" style="left:75.3%"></div></div></div>
+          <div class="tl-row"><div class="tl-name">Level 4</div><div class="tl-track">
+            <div class="tl-word" style="left:68.6%;right:11.9%"></div>
+            <div class="tl-mark old" style="left:86.1%"></div>
+            <div class="tl-mark new" style="left:75.3%"></div></div></div>
+        </div>
+        <div class="legend">
+          <span><i style="background:var(--accent-b);border:1px solid var(--accent)"></i>the word being spoken</span>
+          <span><i style="background:var(--bad)"></i>before — name appeared here</span>
+          <span><i style="background:var(--good)"></i>after — name appears here</span>
+          <span>track = 0 – 3.6 s</span>
+        </div>
+        <div class="scroller">
+          <table>
+            <thead><tr><th>Level</th><th>Clip</th><th>Word spoken</th><th>Before</th><th>After</th></tr></thead>
+            <tbody>
+              <tr><td>Tutorial</td><td class="n">3.097 s</td><td class="n">2.15 – 3.10</td><td class="n"><span class="broke">+0.95</span></td><td class="n"><span class="fixed">+0.33</span></td></tr>
+              <tr><td>Level 1</td><td class="n">2.908 s</td><td class="n">2.30 – 2.91</td><td class="n"><span class="broke">+0.80</span></td><td class="n"><span class="fixed">+0.21</span></td></tr>
+              <tr><td>Level 2</td><td class="n">3.572 s</td><td class="n">2.11 – 3.57</td><td class="n"><span class="broke">+0.99</span></td><td class="n"><span class="fixed">+0.35</span></td></tr>
+              <tr><td>Level 3</td><td class="n">3.368 s</td><td class="n">2.36 – 3.37</td><td class="n"><span class="broke">+0.74</span></td><td class="n"><span class="fixed">+0.35</span></td></tr>
+              <tr><td>Level 4</td><td class="n">3.172 s</td><td class="n">2.47 – 3.17</td><td class="n"><span class="broke">+0.63</span></td><td class="n"><span class="fixed">+0.25</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p style="margin-top:10px;font-size:14px;color:var(--muted)">In Level 1 the old marker sits
+          past the end of the clip — the name appeared after the voice had stopped entirely.</p>
+      </div>
+
+      <div class="row"><div class="lbl">Fix</div>
+        <p>Cues are derived from the clip's real duration and each name's position in the spoken
+          line, and the schedule starts on the “really audible” gate the typed instructions already
+          use. Data-driven, so it holds for any future level or re-recorded clip.
+          <code>controllers.js · part2Cues</code></p></div>
+    </div>
+  </article>
+
+  <!-- 2 -->
+  <article class="bug">
+    <div class="head"><div class="num">BUG 2</div>
+      <h3>“Try again” gave no sign it wanted pressing</h3></div>
+    <div class="body">
+      <div class="row"><div class="lbl">Root cause</div>
+        <p>The button popped in once over 0.3 s and then stopped moving forever. That pop was the
+          entire affordance — half a second later, the one control that unlocks the items was
+          indistinguishable from scenery, at the exact moment the child is already stuck. All five
+          levels; the Next buttons at least had a hint hand, this had nothing.</p></div>
+      <div class="row"><div class="lbl">Fix</div>
+        <p>A shared tap treatment now used by 20 buttons: a springy hop (≈10 px lift + swell, once
+          every 1.5 s) that continues until the button is pressed. Rest pose is captured once, so
+          repeated retries can never make a button drift bigger or smaller.
+          <code>controllers.js · makeTappable</code></p></div>
+    </div>
+  </article>
+
+  <!-- 3 -->
+  <article class="bug">
+    <div class="head"><div class="num">BUG 3</div>
+      <h3>Hint hand cut off by the bottom of the screen</h3></div>
+    <div class="body">
+      <div class="row"><div class="lbl">Root cause</div>
+        <p>The hand sprite draws its hand in the lower-middle of a mostly-empty 1200×1200 frame —
+          fingertip at 52 % of the frame height, wrist at 80 %. Centring that box on a button does not
+          put the finger on the button: it drops the fingertip into the button's lower half and hangs
+          the palm far below. The Part-2 and Part-4 Next buttons sit at y = 1016 in a 1080-tall stage,
+          leaving only 64 px beneath them.</p></div>
+      <div class="row"><div class="lbl">Measured — vertical span of the visible hand</div>
+        <div class="scroller">
+          <table>
+            <thead><tr><th>Button</th><th>Centre</th><th>Before</th><th>After</th></tr></thead>
+            <tbody>
+              <tr><td>Next · Part 2</td><td class="n">1016</td><td class="n"><span class="broke">1021 – 1101 · 21 px cut off</span></td><td class="n"><span class="fixed">986 – 1066 · 14 px clear</span></td></tr>
+              <tr><td>Next · Part 3</td><td class="n">921</td><td class="n"> 926 – 1005 · fits</td><td class="n"><span class="fixed">921 – 1001 · fits</span></td></tr>
+              <tr><td>Next · Part 4</td><td class="n">1016</td><td class="n"><span class="broke">1021 – 1101 · 21 px cut off</span></td><td class="n"><span class="fixed">986 – 1066 · 14 px clear</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p style="margin-top:10px;font-size:14px;color:var(--muted)">Part 3 was never affected, which
+          is why the bug showed on two of the three Next buttons.</p></div>
+      <div class="row"><div class="lbl">Fix</div>
+        <p>The hand is positioned by its <em>fingertip</em> and the visible hand — not the mostly-empty
+          box — is clamped inside the stage. Geometric, so it holds at any window size and for any
+          future button position. <code>controllers.js · placeTapHand</code></p></div>
+    </div>
+  </article>
+
+  <!-- 4 -->
+  <article class="bug">
+    <div class="head"><div class="num">BUG 4</div>
+      <h3>Idle hint made the child wait too long</h3></div>
+    <div class="body">
+      <div class="row"><div class="lbl">Root cause</div>
+        <p>One constant governed all four hint hands at 8 s. Worse, two levels authored delays
+          <em>longer</em> than the rule and were never capped — the Tutorial, the teaching level, made
+          the child wait the longest of all for the Next hand.</p></div>
+      <div class="row"><div class="lbl">Measured — time before a hand appears</div>
+        <div class="scroller">
+          <table>
+            <thead><tr><th>Hand</th><th>Before</th><th>After</th></tr></thead>
+            <tbody>
+              <tr><td>Box tap</td><td class="n"><span class="broke">8 s</span></td><td class="n"><span class="fixed">3 s</span></td></tr>
+              <tr><td>Next button</td><td class="n"><span class="broke">8 s</span> · Tutorial authored 12 s</td><td class="n"><span class="fixed">3 s</span></td></tr>
+              <tr><td>Drag guide</td><td class="n"><span class="broke">8 s</span> · L1 authored 12 s</td><td class="n"><span class="fixed">3 s</span></td></tr>
+              <tr><td>Answer hand</td><td class="n"><span class="broke">8 s</span> · Tutorial authored 5 s</td><td class="n"><span class="fixed">3 s</span></td></tr>
+            </tbody>
+          </table>
+        </div></div>
+      <div class="row"><div class="lbl">Fix</div>
+        <p>One rule, 3 s, with every authored over-run capped at the call site. No hand anywhere can
+          now take longer than 3 s. <code>controllers.js · IDLE_HINT_DELAY</code></p></div>
+    </div>
+  </article>
+
+  <!-- 5 -->
+  <article class="bug">
+    <div class="head"><div class="num">BUG 5</div>
+      <h3>Final screen had no button and no hint at all</h3></div>
+    <div class="body">
+      <div class="row"><div class="lbl">Root cause</div>
+        <p>Two faults stacked. <code>isLastLevel</code> short-circuits before any Next button is shown,
+          so the completion screen alone had no forward affordance and never requested a hint. And even
+          switching the button on would not have worked: it is authored deep inside the Part-4 subtree,
+          while the final picture is a direct child of the level root — a later sibling that paints
+          straight over it.</p></div>
+      <div class="row"><div class="lbl">Fix</div>
+        <p>The button is re-hosted above the final picture (the same technique the ghost hand uses to
+          survive a part change) and rebuilt in CSS as a festival-gold pill in the bottom-right corner,
+          60 px clear of both edges, with a light travelling around its border. It inherits the shared
+          hop, press and hand hint. <code>controllers.js · showFinalNext</code></p></div>
+    </div>
+  </article>
+
+  <!-- 6 -->
+  <article class="bug">
+    <div class="head"><div class="num">BUG 6</div>
+      <h3>Completion sparkles stuttered and cut off</h3></div>
+    <div class="body">
+      <div class="row"><div class="lbl">Root cause — six of them, all on one frame</div>
+        <div class="scroller">
+          <table>
+            <thead><tr><th>#</th><th>Fault</th><th>Effect</th></tr></thead>
+            <tbody>
+              <tr><td class="n">1</td><td>Burst fired on the same frame three nodes were hidden</td><td>layout change + 60 elements in one frame</td></tr>
+              <tr><td class="n">2</td><td>2nd container measured after the 1st burst was in the DOM</td><td>forced synchronous layout</td></tr>
+              <tr><td class="n">3</td><td>Each particle appended separately</td><td>30 insertions per burst</td></tr>
+              <tr><td class="n">4</td><td><code>will-change</code> on every particle</td><td>60 compositor layers at once</td></tr>
+              <tr><td class="n">5</td><td>One shared lifetime from one start time</td><td><strong>the cloud vanished on a single frame</strong></td></tr>
+              <tr><td class="n">6</td><td>Same thrash in the final-screen celebration</td><td>three forced layouts</td></tr>
+            </tbody>
+          </table>
+        </div></div>
+      <div class="row"><div class="lbl">Fix</div>
+        <p>Measure every centre before creating anything; defer the first burst one frame so the scene
+          change is painted first; stagger the containers ~110 ms apart; one <code>DocumentFragment</code>
+          insertion per burst; drop <code>will-change</code>; and give every particle its own lifetime
+          (0.7×–1.3×) so the sparkles taper away instead of blinking out.</p></div>
+    </div>
+  </article>
+
+  <!-- 7 -->
+  <article class="bug">
+    <div class="head"><div class="num">BUG 7</div>
+      <h3>Blue browser touch highlight over every tapped element</h3></div>
+    <div class="body">
+      <div class="row"><div class="lbl">Root cause — two separate sources</div>
+        <p><code>-webkit-tap-highlight-color</code> was set <em>nowhere</em> in the project, so Chrome
+          and WebKit painted their default box over every tap. Separately, the engine gives every tap
+          target <code>tabindex="0"</code> for keyboard access — so a tap also <em>focuses</em> it, and
+          several Android WebViews draw a blue outline on <code>:focus</code> that stays behind after
+          the tap. Fixing only the first would have left the second.</p></div>
+      <div class="row"><div class="lbl">Fix</div>
+        <p>Highlight set to transparent on the universal selector (some WebViews honour it only on the
+          element actually tapped, and these targets nest deep), and the focus outline suppressed —
+          placed before the <code>:focus-visible</code> rule so the keyboard ring still works.
+          <code>style.css</code></p></div>
+    </div>
+  </article>
+
+  <!-- 8 -->
+  <article class="bug">
+    <div class="head"><div class="num">BUG 8</div>
+      <h3>Hand cursor over the whole intro background</h3></div>
+    <div class="body">
+      <div class="row"><div class="lbl">Root cause</div>
+        <p><code>n2_Intro_1</code> — the title backdrop — is a full-screen node (anchors 0,0 → 1,1, the
+          whole 1920×1080 stage) that carries the title art <em>and</em> a Unity Button component. The
+          engine gave every Button component a hand cursor. That button does nothing: its only authored
+          call is an animator <code>Play</code>, which the flow wiring ignores.</p></div>
+      <div class="row"><div class="lbl">Measured — Buttons with no reachable action</div>
+        <div class="scroller">
+          <table>
+            <thead><tr><th>Nodes with a Button component</th><th>Get a real handler</th><th>Showed a false hand</th></tr></thead>
+            <tbody><tr><td class="n">52</td><td class="n">36</td><td class="n"><span class="broke">16</span></td></tr></tbody>
+          </table>
+        </div>
+        <p style="margin-top:10px;font-size:14px;color:var(--muted)">Those 16 include the full-screen
+          intro backdrop, the five box lids, and the ten pan dish markers.</p></div>
+      <div class="row"><div class="lbl">Fix</div>
+        <p>The cursor now derives from <code>role="button"</code>, which is stamped only when a real
+          click handler is attached. The hand means exactly one thing: pressing this does something.
+          <code>engine.js · build</code></p></div>
+    </div>
+  </article>
+
+  <h2 class="sec">Visual comparison</h2>
+
+  <section class="notice" style="border-left-color:var(--line-2);margin-top:0">
+    <h2>These are reconstructions, not screenshots</h2>
+    <p>Every panel below is built from your <em>own shipped files</em> — the sprites, the audio clip,
+      the measured coordinates and the actual animation curves out of the source. Nothing is drawn by
+      hand and no position or timing is estimated. Several are live: press play, and the timing you
+      hear is the real clip against the real cue times.</p>
+    <p>They are rebuilt from the geometry rather than captured from a running browser. Treat them as
+      an exact diagram of each defect — then confirm the fix on the device.</p>
+  </section>
+
+  <article class="bug">
+    <div class="head"><div class="num">BUG 1</div>
+      <h3>Hear the desync yourself</h3></div>
+    <div class="body">
+      <p style="margin:0 0 14px;color:var(--ink-soft);font-size:15px;max-width:72ch">This is the real
+        Tutorial clip, <code>A_lantern_and_a_feather.mp3</code>, 3.097&nbsp;s. Press play and listen for
+        the word <em>“feather”</em>. The shaded band is when it is spoken. The red line is where the
+        scroll used to become readable; the green line is where it does now.</p>
+      <button id="b1play" class="playbtn">▶&nbsp;&nbsp;Play the Tutorial line</button>
+      <audio id="b1audio" src="assets/audio/A_lantern_and_a_feather.mp3" preload="auto"></audio>
+      <div class="tl-track" style="height:38px;margin-top:14px">
+        <div class="tl-word" style="left:69.5%;right:0%"></div>
+        <div id="b1head" style="position:absolute;top:0;bottom:0;width:2px;background:var(--ink);left:0;opacity:0"></div>
+        <div class="tl-mark old" style="left:100%"></div>
+        <div class="tl-mark new" style="left:80.1%"></div>
+      </div>
+      <div class="legend">
+        <span><i style="background:var(--accent-b);border:1px solid var(--accent)"></i>“feather” spoken · 2.15–3.10 s</span>
+        <span><i style="background:var(--bad)"></i>before · 3.10 s — as the clip ends</span>
+        <span><i style="background:var(--good)"></i>after · 2.48 s — inside the word</span>
+      </div>
+    </div>
+  </article>
+
+  <article class="bug">
+    <div class="head"><div class="num">BUG 2</div>
+      <h3>“Try again”, before and after</h3></div>
+    <div class="body">
+      <p style="margin:0 0 14px;color:var(--ink-soft);font-size:15px;max-width:72ch">Your real
+        <code>Button_Blue__6_.webp</code>. The right-hand one is running the actual bump curve from the
+        source — a damped spring sampled at its real values, peaking at +9.7&nbsp;% and 10.6&nbsp;px,
+        once every 1.5&nbsp;s.</p>
+      <div class="scroller"><div style="display:flex;gap:28px;min-width:800px;align-items:flex-start">
+        <figure style="margin:0">
+          <figcaption class="cap bad">Before · never moves again</figcaption>
+          <div class="btnstage"><img src="assets/img/Button_Blue__6_.webp" class="btnimg" alt="Try again"></div>
+        </figure>
+        <figure style="margin:0">
+          <figcaption class="cap good">After · hops until pressed</figcaption>
+          <div class="btnstage"><img src="assets/img/Button_Blue__6_.webp" class="btnimg hop" alt="Try again"></div>
+        </figure>
+      </div></div>
+    </div>
+  </article>
+
+  <article class="bug">
+    <div class="head"><div class="num">BUG 3</div>
+      <h3>The hand against the bottom edge of the stage</h3></div>
+    <div class="body">
+      <p style="margin:0 0 14px;color:var(--ink-soft);font-size:15px;max-width:72ch">A slice of the
+        stage from y&nbsp;860 to y&nbsp;1080. The lower border of each panel <em>is</em> the bottom of
+        the screen — anything past it is not drawn. Real <code>frame_00…webp</code> hand over the real
+        <code>Button_Blue__5_.webp</code>, both at the sizes the game renders them.</p>
+      <div class="scroller">
+        <div style="display:flex;gap:18px;min-width:1076px">
+          <figure style="margin:0">
+            <figcaption style="font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--bad);margin-bottom:7px">Before · palm cut off</figcaption>
+            <div style="position:relative;width:520px;height:220px;overflow:hidden;background:var(--raised);border:1px solid var(--line);border-bottom:2px solid var(--bad);border-radius:2px">
+              <img src="assets/img/Button_Blue__5_.webp" alt="Next button" style="position:absolute;left:-19.5px;top:109px;width:559px;height:94px">
+              <img src="assets/img/frame_00_delay-0.02s.webp" alt="hint hand" style="position:absolute;left:120px;top:16px;width:280px;height:280px">
+            </div>
+            <div style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:6px">art spans y 1021 – 1101 · 21 px lost</div>
+          </figure>
+          <figure style="margin:0">
+            <figcaption style="font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--good);margin-bottom:7px">After · fingertip placed, clamped</figcaption>
+            <div style="position:relative;width:520px;height:220px;overflow:hidden;background:var(--raised);border:1px solid var(--line);border-bottom:2px solid var(--good);border-radius:2px">
+              <img src="assets/img/Button_Blue__5_.webp" alt="Next button" style="position:absolute;left:-19.5px;top:109px;width:559px;height:94px">
+              <img src="assets/img/frame_00_delay-0.02s.webp" alt="hint hand" style="position:absolute;left:117.3px;top:-18.8px;width:280px;height:280px">
+            </div>
+            <div style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:6px">art spans y 986 – 1066 · 14 px clear</div>
+          </figure>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="bug">
+    <div class="head"><div class="num">BUG 4</div>
+      <h3>The wait before a hand appears</h3></div>
+    <div class="body">
+      <p style="margin:0 0 14px;color:var(--ink-soft);font-size:15px;max-width:72ch">Both panels run on
+        the same 9-second loop, so you can watch the gap. The hand fades in at its real delay.</p>
+      <div class="scroller"><div style="display:flex;gap:28px;min-width:800px;align-items:flex-start">
+        <figure style="margin:0">
+          <figcaption class="cap bad">Before · 8 s</figcaption>
+          <div class="btnstage"><img src="assets/img/Button_Blue__5_.webp" class="btnimg" alt="Next">
+            <img src="assets/img/frame_00_delay-0.02s.webp" class="waithand slow" alt="hint hand"></div>
+        </figure>
+        <figure style="margin:0">
+          <figcaption class="cap good">After · 3 s</figcaption>
+          <div class="btnstage"><img src="assets/img/Button_Blue__5_.webp" class="btnimg" alt="Next">
+            <img src="assets/img/frame_00_delay-0.02s.webp" class="waithand fast" alt="hint hand"></div>
+        </figure>
+      </div></div>
+    </div>
+  </article>
+
+  <article class="bug">
+    <div class="head"><div class="num">BUG 5</div>
+      <h3>The final screen</h3></div>
+    <div class="body">
+      <p style="margin:0 0 14px;color:var(--ink-soft);font-size:15px;max-width:72ch">Your real
+        <code>Slide_16_9_-_194.webp</code> at 1&nbsp;:&nbsp;4. The button on the right is the actual
+        shipped CSS — same gradient, same base edge, same travelling border light — at its real
+        position, scaled down with the stage.</p>
+      <div class="scroller"><div style="display:flex;gap:18px;min-width:1000px">
+        <figure style="margin:0">
+          <figcaption class="cap bad">Before · nothing to press</figcaption>
+          <div style="position:relative;width:480px;height:270px;border:1px solid var(--line);border-radius:2px;overflow:hidden">
+            <img src="assets/img/Slide_16_9_-_194.webp" alt="final screen" style="width:480px;height:270px;display:block"></div>
+        </figure>
+        <figure style="margin:0">
+          <figcaption class="cap good">After · gold button, bottom-right</figcaption>
+          <div style="position:relative;width:480px;height:270px;border:1px solid var(--line);border-radius:2px;overflow:hidden">
+            <img src="assets/img/Slide_16_9_-_194.webp" alt="final screen" style="width:480px;height:270px;display:block">
+            <div class="goldbtn"><span>Next</span>
+              <svg class="goldrim" viewBox="0 0 300 96" aria-hidden="true">
+                <rect class="rimbase" x="1.5" y="1.5" width="297" height="93" rx="46.5"></rect>
+                <rect class="rimarc" x="1.5" y="1.5" width="297" height="93" rx="46.5"></rect>
+              </svg></div>
+          </div>
+        </figure>
+      </div></div>
+    </div>
+  </article>
+
+  <article class="bug">
+    <div class="head"><div class="num">BUG 6</div>
+      <h3>How the sparkles end</h3></div>
+    <div class="body">
+      <p style="margin:0 0 14px;color:var(--ink-soft);font-size:15px;max-width:72ch">Same particle
+        maths as the game, same star shape. On the left every particle carries one shared lifetime, so
+        the cloud disappears on a single frame. On the right each carries its own (0.7×–1.3×) and the
+        burst tapers away.</p>
+      <div class="scroller"><div style="display:flex;gap:18px;min-width:800px">
+        <figure style="margin:0">
+          <figcaption class="cap bad">Before · all vanish at once</figcaption>
+          <canvas id="cvOld" width="380" height="180" class="pcanvas"></canvas>
+        </figure>
+        <figure style="margin:0">
+          <figcaption class="cap good">After · staggered fade</figcaption>
+          <canvas id="cvNew" width="380" height="180" class="pcanvas"></canvas>
+        </figure>
+      </div></div>
+    </div>
+  </article>
+
+  <article class="bug">
+    <div class="head"><div class="num">BUG 7</div>
+      <h3>The browser's touch highlight</h3></div>
+    <div class="body">
+      <p style="margin:0 0 14px;color:var(--ink-soft);font-size:15px;max-width:72ch">The one panel here
+        that is an <em>illustration</em> rather than a reconstruction — the highlight is painted by the
+        browser itself, so its exact shade varies by device. What is accurate is the behaviour: a
+        squared-off box over the whole element, ignoring its rounded shape.</p>
+      <div class="scroller"><div style="display:flex;gap:28px;min-width:800px;align-items:flex-start">
+        <figure style="margin:0">
+          <figcaption class="cap bad">Before · box over the pill</figcaption>
+          <div class="btnstage"><img src="assets/img/Button_Blue__5_.webp" class="btnimg" alt="Next">
+            <div style="position:absolute;left:12px;top:22px;width:335px;height:56px;background:rgba(70,130,220,.38)"></div></div>
+        </figure>
+        <figure style="margin:0">
+          <figcaption class="cap good">After · the game's own press</figcaption>
+          <div class="btnstage"><img src="assets/img/Button_Blue__5_.webp" class="btnimg pressed" alt="Next"></div>
+        </figure>
+      </div></div>
+    </div>
+  </article>
+
+  <article class="bug">
+    <div class="head"><div class="num">BUG 8</div>
+      <h3>Where the hand cursor appeared on the title screen</h3></div>
+    <div class="body">
+      <p style="margin:0 0 14px;color:var(--ink-soft);font-size:15px;max-width:72ch">The whole stage at
+        1&nbsp;:&nbsp;4, using the real <code>TITLE.webp</code>. The tinted area is where the pointing-hand
+        cursor was shown. The “Let's Go” hit rect is computed from the layout —
+        <code>left 1431, top 718, 489×362</code> — not eyeballed.</p>
+      <div class="scroller">
+        <div style="display:flex;gap:18px;min-width:1000px">
+          <figure style="margin:0">
+            <figcaption style="font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--bad);margin-bottom:7px">Before · the entire background</figcaption>
+            <div style="position:relative;width:480px;height:270px;border:1px solid var(--line);border-radius:2px;overflow:hidden">
+              <img src="assets/img/TITLE.webp" alt="Royal Bloom title screen" style="width:480px;height:270px;display:block">
+              <div style="position:absolute;inset:0;background:rgba(190,61,51,.42);outline:2px solid var(--bad);outline-offset:-2px"></div>
+            </div>
+            <div style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:6px">1920 × 1080 — all of it</div>
+          </figure>
+          <figure style="margin:0">
+            <figcaption style="font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--good);margin-bottom:7px">After · only the button</figcaption>
+            <div style="position:relative;width:480px;height:270px;border:1px solid var(--line);border-radius:2px;overflow:hidden">
+              <img src="assets/img/TITLE.webp" alt="Royal Bloom title screen" style="width:480px;height:270px;display:block">
+              <div style="position:absolute;left:357.75px;top:179.5px;width:122.25px;height:90.5px;background:rgba(27,122,80,.38);outline:2px solid var(--good);outline-offset:-2px"></div>
+            </div>
+            <div style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:6px">489 × 362 — 4.3 % of the stage</div>
+          </figure>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <h2 class="sec">Second round — raised after the first report</h2>
+
+  <article class="bug">
+    <div class="head"><div class="num">BUG 9</div>
+      <h3>The hand slid behind the “Next” label</h3></div>
+    <div class="body">
+      <div class="row"><div class="lbl">Root cause — introduced by the gold button</div>
+        <p>The label carried <code>z-index: 1</code> so it would sit above the travelling border light.
+          But <code>.node</code> is <code>position: absolute</code> with <em>no</em> z-index, so it
+          creates no stacking context — and that <code>z-index: 1</code> escaped into the <strong>root</strong>
+          stacking context, where it outranks every <code>z-index: auto</code> element on the stage.
+          The hint hand is one of those, so the word painted over the hand.</p></div>
+      <div class="row"><div class="lbl">Fix</div>
+        <p><code>isolation: isolate</code> on the button builds a stacking context without touching
+          layout: inside, the label still sits above the border light; outside, the button stacks by
+          DOM order again, and <code>n519_hand</code> is a later root sibling than the level.
+          <code>style.css · .rb-magic-btn</code> · <code>c474d61</code></p></div>
+    </div>
+  </article>
+
+  <article class="bug">
+    <div class="head"><div class="num">BUG 10</div>
+      <h3>Two celebration sounds on the final drop</h3></div>
+    <div class="body">
+      <div class="row"><div class="lbl">Root cause — also mine</div>
+        <p><code>checkPart4Completion</code> runs in the <em>same frame</em> as the final correct drop,
+          which has just started the authored magical chime — <strong>2.81 s</strong> of it. The
+          three-note fanfare added there played directly on top, so clearing the stage was heard as
+          two celebrations at once.</p></div>
+      <div class="row"><div class="lbl">Fix</div>
+        <p>The fanfare is gone. The chime <em>is</em> the stage-clear sound and the stars are its
+          picture. This restores the rule the rest of this work follows: add a sound only where the
+          game was silent, never on top of an authored one. <code>c8a6d26</code></p></div>
+    </div>
+  </article>
+
+  <article class="bug">
+    <div class="head"><div class="num">BUG 11</div>
+      <h3>The game paused after tapping Next</h3></div>
+    <div class="body">
+      <div class="row"><div class="lbl">Root cause — two flat waits, pre-existing</div>
+        <p>Part 3 sat for <strong>1.1 s doing nothing</strong> before its panel even began to slide,
+          then took a further 1.0 s before a word was spoken. The 1.1 s existed so Part 2 could finish
+          leaving. Part 4 had a flat 1 s of its own.</p></div>
+      <div class="row"><div class="lbl">Measured — dead screen after the button press</div>
+        <div class="scroller">
+          <table>
+            <thead><tr><th>Transition</th><th>Before</th><th>After</th><th>Saved</th></tr></thead>
+            <tbody>
+              <tr><td>Part 2 → Part 3</td><td class="n"><span class="broke">2.10 s</span></td><td class="n"><span class="fixed">1.05 s</span></td><td class="n">−50 %</td></tr>
+              <tr><td>Part 3 → Part 4</td><td class="n"><span class="broke">1.00 s</span></td><td class="n"><span class="fixed">0.35 s</span></td><td class="n">−65 %</td></tr>
+            </tbody>
+          </table>
+        </div></div>
+      <div class="row"><div class="lbl">Fix</div>
+        <p>The two transitions now overlap instead of queueing — which is how the move should have
+          read anyway. Press Next and the screen answers. <code>b2e0aba</code></p>
+        <p style="color:var(--muted);font-size:14px">A third source was left alone deliberately: art
+          warming can still add up to 1.5 s on a cold first visit. Removing that would bring back the
+          empty-card bug an earlier QA round signed off.</p></div>
+    </div>
+  </article>
+
+  <h2 class="sec">Twelve found while working</h2>
+  <div class="bug"><div class="body" style="padding-left:22px">
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Found</th><th>Why it mattered</th></tr></thead>
+        <tbody>
+          <tr><td>Press state fired on <code>click</code> — which is release</td><td>On touch, buttons never looked pressed <em>while</em> pressing</td></tr>
+          <tr><td>Confetti token reassigned inside a loop</td><td>Leaving a level mid-celebration left particles running over the next screen</td></tr>
+          <tr><td>Part-3 wrong answer was silent</td><td>Part 4 had an error sound; Part 3 had none</td></tr>
+          <tr><td>Tutorial's Next hint authored at 12 s</td><td>The teaching level made the child wait longest</td></tr>
+          <tr><td>Level 1's Part-4 ghost authored at 12 s</td><td>Unreachable value — silently wrong</td></tr>
+          <tr><td>Final-screen button buried under the final art</td><td>Switching it on alone would have shown nothing</td></tr>
+          <tr><td>Two smoke-test assertions still expected 8 s</td><td><strong>Would have failed the gate</strong> on every level × viewport</td></tr>
+          <tr><td>Box lids and pan markers showed a false hand</td><td>Same root cause as Bug 8</td></tr>
+          <tr><td><strong>The hop could swallow a tap</strong></td><td>A browser fires <code>click</code> only if pointerdown and pointerup land on the same element — a button hopping out from under a finger meant <strong>the tap did nothing</strong>. The hop now freezes for the whole press</td></tr>
+          <tr><td><strong>A replayed level showed its Next button</strong></td><td><code>self.start()</code> reset nextP2/nextP3/tryAgain but never <strong>nextP4</strong>, so it stayed on from the previous run — now a gold button floating over Part 1 on Level 4</td></tr>
+          <tr><td><strong><code>E.kill()</code> missed the press tween</strong></td><td>A node torn down mid-press had that tween finish and write the press state back, leaving a button <strong>stuck pushed in and shaded on the next screen</strong></td></tr>
+          <tr><td><code>part3BallLeft</code> assigned, never read</td><td>Dead state</td></tr>
+          <tr><td>Unused <code>nodes</code> lookup in <code>main.js</code></td><td>Dead code</td></tr>
+          <tr><td>A stray character I typed into a live line</td><td>Would have thrown <code>ReferenceError</code> on <strong>every correct Part-4 drop</strong>. Caught in my own verification before it shipped</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div></div>
+
+  <h2 class="sec">What still has to be checked on a real device</h2>
+  <ul class="check">
+    <li><span class="box"></span><span><b>Run both gates.</b> <code>node scripts/check-all.mjs</code> and <code>node qa/smoke-test.mjs</code> — neither has ever been run against these changes</span></li>
+    <li><span class="box"></span><span><b>Bug 1</b> — Level 2: the second name scroll opens <em>as</em> the voice says the word</span></li>
+    <li><span class="box"></span><span><b>Bug 2</b> — answer wrong three times: the button hops each time and stays the same size</span></li>
+    <li><span class="box"></span><span><b>Bug 3</b> — Part-2 and Part-4 Next: the whole hand is visible, nothing cut off</span></li>
+    <li><span class="box"></span><span><b>Bug 4</b> — stopwatch all four hands: about 3 s, none longer</span></li>
+    <li><span class="box"></span><span><b>Bug 5</b> — final screen: gold button bottom-right, border light circling, hand after 3 s</span></li>
+    <li><span class="box"></span><span><b>Bug 6</b> — finish a sort: no stutter, sparkles fade out staggered, none carry to the next screen</span></li>
+    <li><span class="box"></span><span><b>Bug 7</b> — <b>on an Android tablet:</b> no blue box during the tap, none left behind after it</span></li>
+    <li><span class="box"></span><span><b>Bug 8</b> — intro screen: the hand appears only over “Let's Go”, never the background</span></li>
+    <li><span class="box"></span><span><b>Regression</b> — “Let's Go” keeps its original breathe; the box keeps its wobble and stays opaque; the answer items never resize or dim</span></li>
+    <li><span class="box"></span><span><b>Regression</b> — the magical star-burst chime still plays when an item lands in the basket or wagon, and <b>only once</b> on the final drop</span></li>
+    <li><span class="box"></span><span><b>Bug 9</b> — the hint hand sits <em>on top of</em> the gold button's "Next", never behind it</span></li>
+    <li><span class="box"></span><span><b>Bug 11</b> — press Next on Part 2 and Part 3: the screen answers straight away, no dead pause</span></li>
+    <li><span class="box"></span><span><b>Taps never get swallowed</b> — tap each hopping button ten times in a row, including mid-hop and near its edges; every tap must register</span></li>
+    <li><span class="box"></span><span><b>Replay a level</b> — it must start on Part 1 with no leftover Next button, and no button stuck pushed-in or shaded</span></li>
+  </ul>
+
+  <footer>
+    <p>Five commits, <code>2cf5ae0..b2e0aba</code> on <code>main</code>: 8 files, +948 −80. Entirely
+      self-contained — <code>js/data.js</code>, all artwork and all audio are untouched — so
+      <code>git revert b2e0aba</code> (and back through the range) restores the previous build if
+      anything is wrong on screen.</p>
+    <p style="margin-top:10px">Nothing here has been executed. Both gates remain unrun.</p>
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---- Bug 1: play the real clip, run a playhead across the real 3.097s timeline ---- */
+  var au = document.getElementById("b1audio"),
+      btn = document.getElementById("b1play"),
+      head = document.getElementById("b1head");
+  if (au && btn && head) {
+    var CLIP = 3.097, raf = null;
+    var step = function () {
+      if (au.paused) { raf = null; return; }
+      head.style.opacity = "1";
+      head.style.left = Math.min(100, (au.currentTime / CLIP) * 100) + "%";
+      raf = requestAnimationFrame(step);
+    };
+    btn.addEventListener("click", function () {
+      if (!au.paused) { au.pause(); au.currentTime = 0; head.style.opacity = "0";
+                        btn.textContent = "▶  Play the Tutorial line"; return; }
+      au.currentTime = 0;
+      au.play().then(function () {
+        btn.textContent = "■  Stop";
+        if (!raf) raf = requestAnimationFrame(step);
+      }, function () { btn.textContent = "audio blocked by the browser"; });
+    });
+    au.addEventListener("ended", function () {
+      btn.textContent = "▶  Play the Tutorial line";
+      head.style.opacity = "0";
+    });
+  }
+
+  /* ---- Bug 6: the game's own particle maths, one shared lifetime vs per-particle ---- */
+  var COLORS = ["#FFD84D", "#FFC93C", "#FFE9A0", "#FFB300", "#FFF3C4", "#FFDF70"];
+  function star(ctx, x, y, r, rot) {
+    ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.beginPath();
+    for (var i = 0; i < 10; i++) {
+      var rad = (i % 2 === 0) ? r : r * 0.42, a = (Math.PI / 5) * i - Math.PI / 2;
+      ctx[i ? "lineTo" : "moveTo"](Math.cos(a) * rad, Math.sin(a) * rad);
+    }
+    ctx.closePath(); ctx.fill(); ctx.restore();
+  }
+  function run(canvas, varyLife) {
+    if (!canvas || !canvas.getContext) return;
+    var ctx = canvas.getContext("2d"), W = canvas.width, H = canvas.height;
+    var COUNT = 26, CYCLE = 2600, BASE = 1.6, born = performance.now();
+    var P = [];
+    for (var i = 0; i < COUNT; i++) {
+      var ang = (i / COUNT) * Math.PI * 2 + (i % 3) * 0.5, spd = (110 + (i % 7) * 38) * 0.42;
+      P.push({
+        vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd - 120 * 0.42,
+        rise: (70 + (i % 5) * 22) * 0.42, spin: (i % 2 ? 1 : -1) * (110 + (i % 4) * 55),
+        base: 0.55 + (i % 5) * 0.16, phase: (i % 6) * 1.05, col: COLORS[i % COLORS.length],
+        life: varyLife ? BASE * (0.7 + 0.6 * ((i % 7) / 6)) : BASE
+      });
+    }
+    (function frame(now) {
+      var t = ((now - born) % CYCLE) / 1000;
+      ctx.clearRect(0, 0, W, H);
+      for (var i = 0; i < P.length; i++) {
+        var p = P[i]; if (t >= p.life) continue;
+        var x = W / 2 + p.vx * t, y = H * 0.72 + p.vy * t + 70 * 0.42 * t * t - p.rise * t;
+        var tw = 0.5 + 0.6 * Math.abs(Math.sin(t * 7 + p.phase));
+        ctx.globalAlpha = Math.max(0, (t < 0.15 ? t / 0.15 : 1) * (1 - t / p.life));
+        ctx.fillStyle = p.col;
+        star(ctx, x, y, 7 * p.base * tw, t * p.spin * Math.PI / 180);
+      }
+      ctx.globalAlpha = 1;
+      requestAnimationFrame(frame);
+    })(performance.now());
+  }
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!reduce) {
+    run(document.getElementById("cvOld"), false);
+    run(document.getElementById("cvNew"), true);
+  }
+})();
+</script>
+
+</body>
+</html>

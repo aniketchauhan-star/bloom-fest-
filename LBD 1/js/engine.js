@@ -111,6 +111,15 @@ var Engine = (function () {
     var min = aMin * P + anchored - pivot * size;
     return { min: min, size: sz };
   }
+  // Press geometry, consumed by applyRect below and driven by the press block further down.
+  // _pressT is one value, 0 (released) -> 1 (fully held), and everything about the press is derived
+  // from it: the button DROPS onto its base, SQUASHES (a touch wider, noticeably shorter) and is
+  // shaded darker by CSS. That is how a real game button behaves — the authored art already carries
+  // its own 3D base (the darker strip along the bottom edge of Button_Blue), so pushing the face
+  // down into that base is the honest press for this artwork. No glow is involved anywhere.
+  var PRESS_DROP = 8;       // logical px the face travels down onto its base
+  var PRESS_SX = 0.015;     // widens slightly as it squashes
+  var PRESS_SY = 0.07;      // and loses 7% of its height — the squash that sells the impact
   function applyRect(rec) {
     var rt = rec.rt, pw = rec.parentW, ph = rec.parentH;
     var X = axis(pw, rt.aMinX, rt.aMaxX, rt.ax, rt.sdX, rt.pvX);
@@ -121,8 +130,15 @@ var Engine = (function () {
     el.style.width = w + "px"; el.style.height = h + "px";
     el.style.left = left + "px"; el.style.top = top + "px";
     var tr = "";
+    // The press is layered on here as a MULTIPLIER/offset rather than written into rt.*, so it
+    // composes with whatever else is animating the node — an idle hop and a finger-down can never
+    // fight over the transform, and rt.sx / rt.ay still report the node's real authored values to
+    // everything else (drop maths, QA asserts, God Mode).
+    var pt = rec._pressT || 0;
+    var psx = rt.sx * (1 + PRESS_SX * pt), psy = rt.sy * (1 - PRESS_SY * pt);
+    if (pt) tr += "translateY(" + (PRESS_DROP * pt) + "px) ";
     if (rt.rot) tr += "rotate(" + (-rt.rot) + "deg) ";
-    if (rt.sx !== 1 || rt.sy !== 1) tr += "scale(" + rt.sx + "," + rt.sy + ")";
+    if (psx !== 1 || psy !== 1) tr += "scale(" + psx + "," + psy + ")";
     el.style.transform = tr;
     el.style.transformOrigin = (rt.pvX * 100) + "% " + ((1 - rt.pvY) * 100) + "%";
     rec._w = w; rec._h = h;
@@ -330,7 +346,18 @@ var Engine = (function () {
     }
     if (c.image && c.image.raycast === false && !c.button) el.style.pointerEvents = "none";
     if (c.tmp) paintText(rec, c.tmp);
-    if (c.button) { el.style.pointerEvents = "auto"; el.style.cursor = "pointer"; rec._btn = c.button; }
+    // A Unity Button component makes a node CLICKABLE, but it does not mean anything actually
+    // happens when it is clicked. Several exported Buttons have no reachable action at all: the
+    // intro backdrop (n2_Intro_1) is a full-screen 1920x1080 node whose only authored call is an
+    // animator "Play" — which the flow wiring ignores, since it only honours SetActive — and the
+    // box lids and the pan drop markers are the same. Painting a hand cursor here therefore put a
+    // hand over the ENTIRE intro background, and over dead art on the level screens.
+    //
+    // So the cursor is no longer derived from "has a Button component". It comes from role="button",
+    // which onClick stamps only when a real handler is attached (see the cursor rules in style.css).
+    // The hand now means exactly one thing: pressing this does something. pointer-events stays auto
+    // so a handler attached later still receives its clicks.
+    if (c.button) { el.style.pointerEvents = "auto"; rec._btn = c.button; }
     if (c.draggable || c.basket) el.style.pointerEvents = "auto";
 
     for (var i = 0; i < (node.children || []).length; i++) {
@@ -392,15 +419,112 @@ var Engine = (function () {
   function setInputEnabled(id, on) { var r = N[id]; if (!r) return; r.el.style.pointerEvents = on ? "auto" : "none"; if (r._btn) r._btn.interactable = on; }
   function setRaycast(id, on) { var r = N[id]; if (r) r.el.style.pointerEvents = on ? "auto" : "none"; }
 
+  // ---------------------------------------------------------------- press feedback (two-state)
+  // A button has to react the INSTANT the finger goes down. The .pressed class used to be added by
+  // the CLICK handler — and click fires on RELEASE — so on touch the child saw the "pressed" look
+  // only after the tap was already over, which is why the buttons read as flat pictures. Press
+  // state is now driven by pointerdown/pointerup, and it is a real game-button press: the face
+  // DROPS onto its base and SQUASHES (geometry, via _pressT in applyRect) while a shading pass
+  // darkens it (colour, via the .pressed class). No glow — depth is what sells a button.
+  // Two things had to be got right for the press to actually READ:
+  //
+  //  1. It must not cancel itself. Pressing shrinks the button, and a waiting button is also
+  //     hopping — so on a stationary finger the button moves out from under the pointer and fires
+  //     pointerleave, which was releasing the press WHILE IT WAS STILL HELD. It flickered off
+  //     instantly. There is no pointerleave handling any more: exactly one button can be held at a
+  //     time and it is released from a WINDOW-level pointerup, so nothing about the button's own
+  //     geometry can end its own press.
+  //  2. A fast tap must still be visible. A child's tap is ~100ms; the dark tone needs ~70ms to
+  //     arrive, so releasing immediately meant the state never fully landed. The press is now held
+  //     for at least PRESS_MIN_MS before it springs back, however briefly the screen was touched.
+  var PRESS_MIN_MS = 140;     // minimum time the pressed state stays up, even for a stab of a tap
+  // AudioManager loads AFTER this file, so it is resolved at call time, never at load time.
+  function uiSound(name) { try { if (window.AudioManager && AudioManager.playUI) AudioManager.playUI(name); } catch (e) {} }
+  var pressedRec = null;      // the one button currently held
+  var pressedAt = 0;
+  var pressTimer = null;
+
+  function setPressAmount(id, t) { var r = N[id]; if (!r) return; r._pressT = t; applyRect(r); }
+  function pressTo(rec, target, dur, easeName) {
+    killTweensOf(rec.id + "#press");
+    var from = rec._pressT || 0;
+    tween({
+      dur: dur, ease: easeName, tag: rec.id + "#press",
+      fn: function (e) { rec._pressT = lerp(from, target, e); applyRect(rec); },
+      onComplete: function () { rec._pressT = target; applyRect(rec); }
+    });
+  }
+  function pressDown(rec) {
+    if (pressedRec === rec) return;
+    if (pressedRec) pressSettle(pressedRec);          // never leave a previous button stuck down
+    if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+    pressedRec = rec; pressedAt = performance.now();
+    rec.el.classList.add("pressed");
+    pressTo(rec, 1, 0.06, "OutQuad");                 // snap down fast — impact should feel instant
+  }
+  function pressSettle(rec) {
+    rec.el.classList.remove("pressed");
+    pressTo(rec, 0, 0.26, "OutBack");                 // springs back up past rest and settles: "pop"
+  }
+  // Released from the window, so it fires wherever the finger ends up.
+  function pressRelease() {
+    var rec = pressedRec; if (!rec) return;
+    pressedRec = null;
+    var wait = PRESS_MIN_MS - (performance.now() - pressedAt);
+    if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+    if (wait <= 0) pressSettle(rec);
+    else pressTimer = setTimeout(function () { pressTimer = null; pressSettle(rec); }, wait);
+  }
+  var pressWindowWired = false;
+  function wirePressWindow() {
+    if (pressWindowWired) return;
+    pressWindowWired = true;
+    // capture phase: a press is released even if something downstream stops propagation
+    window.addEventListener("pointerup", pressRelease, true);
+    window.addEventListener("pointercancel", pressRelease, true);
+    window.addEventListener("blur", pressRelease);
+  }
+
   // keyed onClick: registering with the same key replaces the previous handler (no leaks).
   function onClick(id, fn, opts) {
     var r = N[id]; if (!r) return function () {};
     opts = opts || {};
+    // opts.press selects the tap response:
+    //   (default)  full game-button press — drops onto its base, squashes and shades, from the
+    //              instant of pointerdown. Every in-game button.
+    //   false      nothing at all. The two answer items: they ARE the draggable item nodes, must
+    //              hold their exact size, and their feedback is the green/red glow instead.
+    //   "legacy"   the original 120ms shade on click, and nothing else. The intro Let's Go button,
+    //              which is deliberately kept exactly as it was authored.
+    //
+    // The wiring runs ONCE per node: onClick is called repeatedly with different keys on the same
+    // button (a Next button takes both "gm" and "nexthint") and must not stack pointer listeners.
+    if (opts.press !== false && opts.press !== "legacy" && !r._pressWired) {
+      r._pressWired = true;
+      wirePressWindow();
+      // Only the DOWN edge is per-button; the release is global (see pressRelease), so the press
+      // survives the button shrinking, hopping, or the finger sliding off mid-hold.
+      var pDown = function (ev) {
+        if (r._btn && r._btn.interactable === false) return;
+        if (ev && ev.isPrimary === false) return;
+        uiSound("tap");                                  // sound lands with the press, not the release
+        pressDown(r);
+      };
+      r.el.addEventListener("pointerdown", pDown);
+      r.el.addEventListener("keydown", function (e2) { if (e2.key === "Enter" || e2.key === " " || e2.key === "Spacebar") pressDown(r); });
+      r.el.addEventListener("keyup", pressRelease);      // keyboard gets the same two-state flash
+    }
     var h = function (e) {
       e.stopPropagation();
       if (r._btn && r._btn.interactable === false) return;
-      r.el.classList.add("pressed");
-      setTimeout(function () { r.el.classList.remove("pressed"); }, 120);
+      // Targets that opt out of the press response still get the tap SOUND — every tap in the game
+      // is audible. (Full-press targets already played it on pointerdown, so they are skipped here.)
+      if (opts.press === false) uiSound("tap");
+      if (opts.press === "legacy") {          // untouched original: a brief shade on click, no motion
+        uiSound("tap");
+        r.el.classList.add("pressed");
+        setTimeout(function () { r.el.classList.remove("pressed"); }, 120);
+      }
       // clear focus after a pointer click so the keyboard :focus-visible ring never lingers
       // on a tapped game item (avoids a stray outline box on scale items / buttons)
       if (e && e.type === "click" && typeof r.el.blur === "function") { try { r.el.blur(); } catch (_) {} }
@@ -606,7 +730,10 @@ var Engine = (function () {
       onComplete: opts.onComplete
     });
   }
-  function kill(id) { killTweensOf(id); killTweensOf(id + "#fade"); killTweensOf(id + "#path"); killTweensOf(id + "#tilt"); }
+  // "#press" belongs here: without it, killing a node mid-press left the press tween running, and it
+  // would finish by writing _pressT back — so a button torn down while held could be left visibly
+  // pushed in and shaded on the next screen.
+  function kill(id) { killTweensOf(id); killTweensOf(id + "#fade"); killTweensOf(id + "#path"); killTweensOf(id + "#tilt"); killTweensOf(id + "#press"); }
 
   // world-space path (ghost hand) — 3-point arc in logical stage coordinates
   function doPathScreen(id, pts, dur, easeName, loops, yoyo) {
@@ -632,14 +759,26 @@ var Engine = (function () {
   var confettiRaf = null;
   var CONFETTI_MAX = 80;
   var SPARK_COLORS = ["#FFD84D", "#FFC93C", "#FFE9A0", "#FFB300", "#FFF3C4", "#FFDF70"];
-  function confettiBurst(id, token) {
+  // Client-pixel centre of a node, for callers that want to measure EVERY burst before creating any
+  // particles. Measuring between bursts forces a synchronous layout with the previous burst's
+  // elements already in the document — a guaranteed hitch, and it was happening on the one frame
+  // that also hid the instruction banner and both item cards.
+  function confettiCenter(id) {
     var r = N[id];
     var rect = (r ? r.el : stage).getBoundingClientRect();
-    var cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  }
+  function confettiBurst(id, token, opts) {
+    opts = opts || {};
+    var c = opts.at || confettiCenter(id);
+    var cx = c.x, cy = c.y;
     var count = reducedMotion ? 12 : 30;
     var life = reducedMotion ? 0.8 : 1.6;
     count = Math.min(count, Math.max(0, CONFETTI_MAX - confettiNodes.length));
     var t0 = performance.now();
+    // Build off-document and insert ONCE. Appending each particle separately meant `count` separate
+    // insertions into <body>, each invalidating layout, right when the scene was also changing.
+    var frag = document.createDocumentFragment();
     for (var i = 0; i < count; i++) {
       var el = document.createElement("div");
       el.className = "confetti-p";
@@ -647,7 +786,7 @@ var Engine = (function () {
       var col = SPARK_COLORS[i % SPARK_COLORS.length];
       // glow baked into the fill instead of a filter: paint-only, no per-frame blur pass
       el.style.background = "radial-gradient(circle at 50% 45%, #fffbe8 0%, #ffe89a 40%, " + col + " 100%)";
-      document.body.appendChild(el);
+      frag.appendChild(el);
       // gentle magical sparkle: stars spread softly, drift UP, twinkle (pulse + fade), barely fall
       var ang = (i / Math.max(count, 1)) * Math.PI * 2 + (i % 3) * 0.5;
       var spd = 110 + (i % 7) * 38;
@@ -656,9 +795,13 @@ var Engine = (function () {
         vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd - 120,
         rise: 70 + (i % 5) * 22, spin: (i % 2 ? 1 : -1) * (110 + (i % 4) * 55),
         base: 0.55 + (i % 5) * 0.16, phase: (i % 6) * 1.05,
-        t0: t0, life: life, token: token
+        // Each star gets its OWN lifetime (0.7x - 1.3x). They all used to share one life from one
+        // start time, so the entire cloud blinked out on a single frame — which is what read as the
+        // animation being "cut off" rather than tapering away.
+        t0: t0, life: life * (0.7 + 0.6 * ((i % 7) / 6)), token: token
       });
     }
+    if (count) document.body.appendChild(frag);
     if (!confettiRaf && confettiNodes.length) confettiRaf = requestAnimationFrame(stepConfetti);
   }
   function dropParticle(i) {
@@ -732,6 +875,7 @@ var Engine = (function () {
     setAnchoredPos: setAnchoredPos, getAnchoredPos: getAnchoredPos, setScale: setScale, setScaleXY: setScaleXY, getScale: getScale, setRotation: setRotation,
     setSizeDelta: setSizeDelta, setPose: setPose, getRect: getRect, childByName: childByName,
     setAlpha: setAlpha, getAlpha: getAlpha, setInteractable: setInteractable, setInputEnabled: setInputEnabled, onClick: onClick, setRaycast: setRaycast, ariaLabel: ariaLabel,
+    setPressAmount: setPressAmount,
     onActivated: onActivated,
     reparent: reparent, reparentKeepWorld: reparentKeepWorld, ensureLayer: ensureLayer,
     setSiblingIndex: setSiblingIndex, getSiblingIndex: getSiblingIndex, setAsLastSibling: setAsLastSibling, setAsFirstSibling: setAsFirstSibling,
@@ -741,7 +885,7 @@ var Engine = (function () {
     preloadSprites: preloadSprites, preloadPaths: preloadPaths, artRectLogical: artRectLogical, spriteSize: function (src) { return spriteMeta[src] || null; },
     tween: tween, tweenP: tweenP, killTweensOf: killTweensOf, onUpdate: onUpdate, activeTweenCount: activeTweenCount,
     setText: setText, repaintSprite: repaintSprite, setSelfPaint: setSelfPaint,
-    confettiBurst: confettiBurst, clearConfetti: clearConfetti, confettiCount: confettiCount, popTrigger: popTrigger,
+    confettiBurst: confettiBurst, confettiCenter: confettiCenter, clearConfetti: clearConfetti, confettiCount: confettiCount, popTrigger: popTrigger,
     reducedMotion: function () { return reducedMotion; },
     logicalSize: function () { return { w: LOGICAL_W, h: LOGICAL_H }; },
     stats: stats, nodes: function () { return N; }, cfg: function () { return CFG; }

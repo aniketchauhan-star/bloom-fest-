@@ -90,7 +90,7 @@
   var gmStarted = {};
 
   function collectAssets(hostId) {
-    var out = [], nodes = E.nodes();
+    var out = [];
     var root = E.get(hostId); if (!root) return out;
     (function walk(rec) {
       if (rec._img && rec._img.sprite && rec._img.sprite.path) out.push(rec._img.sprite.path);

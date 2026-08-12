@@ -130,6 +130,9 @@ var Interaction = (function () {
       ev.preventDefault();
 
       activeItemId = id; activePointerId = ev.pointerId;
+      // the item is now lifted — a rising blip, so picking something up is as audible as putting it
+      // down. Resolved at call time: AudioManager loads before this file, but stay defensive.
+      try { if (window.AudioManager && AudioManager.playUI) AudioManager.playUI("pick"); } catch (e) {}
       if (document.body) document.body.classList.add("rb-grabbing");   // closed-hand cursor everywhere while dragging
       captureOrigin(r);
       try { r.el.setPointerCapture(ev.pointerId); } catch (e) {}

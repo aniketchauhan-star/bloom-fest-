@@ -304,10 +304,12 @@ async function runViewport(vp, full) {
         ok(vis(gh), label + host + ": Part-4 drag-guide hand visible (re-hosted off the hidden Part 3)");
         // it must FADE up, not blink on at full opacity (polling is 100ms, the fade is 450ms)
         ok(E.getAlpha(gh) < 0.95, label + host + ": drag hand fades in rather than popping (alpha " + E.getAlpha(gh).toFixed(2) + ")");
-        // The Tutorial teaches (demonstrates quickly); after it the child gets 8s of quiet to try for
-        // themselves before a hand appears. Poll granularity is 100ms, hence the tolerance.
-        if (f.isFirstLevel) ok(idleWait <= 7, label + host + ": Tutorial demonstrates without a long wait (" + idleWait.toFixed(1) + "s)");
-        else ok(idleWait >= 7.5 && idleWait <= 9.5, label + host + ": hand waits ~8s of idle before helping (" + idleWait.toFixed(1) + "s)");
+        // The Tutorial teaches (demonstrates quickly); after it the child gets a short beat of quiet
+        // to try for themselves before a hand appears — IDLE_HINT_DELAY, now 3s rather than 8s,
+        // because 8s on a completion screen read as the game having stopped. Poll granularity is
+        // 100ms, hence the tolerance.
+        if (f.isFirstLevel) ok(idleWait <= 4, label + host + ": Tutorial demonstrates without a long wait (" + idleWait.toFixed(1) + "s)");
+        else ok(idleWait >= 2 && idleWait <= 4.5, label + host + ": hand waits ~3s of idle before helping (" + idleWait.toFixed(1) + "s)");
         // exactly ONE hand: the animated ghost. The static hand-on-the-card overlay (and its dotted
         // arrow art) used to show at the same time, so the child saw two hands and an arrow at once.
         const others = strayHands(false);
@@ -448,7 +450,7 @@ async function runViewport(vp, full) {
   }
 
   // ---- the idle-hint rule, measured at EVERY step of a post-Tutorial level ----
-  // "After the Tutorial, a hand appears only once the child has been idle ~8s." Four separate hint
+  // "After the Tutorial, a hand appears only once the child has been idle ~3s." Four separate hint
   // families implement that (box / Next button / drag ghost / answer hand); this sits still at each
   // step of Level 1 and times how long a hand actually takes, so no family can drift out of the rule.
   console.log("-- idle-hint rule: every hand in Level 1");
@@ -465,7 +467,10 @@ async function runViewport(vp, full) {
     const NODES = IE.nodes();
     const anyHand = () => Object.keys(NODES).some((id) => /hand|hint|ghost/i.test((NODES[id].node.name || "")) && IE.isInteractableInTree(id) && IE.getAlpha(id) > 0.02);
     const timeToHand = async (maxS) => { const t0 = ienv.vnow(); const got = await iuntil(anyHand, maxS * 1000, 100); return got ? (ienv.vnow() - t0) / 1000 : null; };
-    const inRule = (s, step) => ok(s !== null && s >= 7.5 && s <= 9.5, "idle rule | Level 1 " + step + " hand waits ~8s (" + (s === null ? "never appeared" : s.toFixed(1) + "s") + ")");
+    // The idle rule is 3s (IDLE_HINT_DELAY), down from 8s: on a completion screen an 8s pause read
+    // as the game having stopped. The window is wide on the low side because timeToHand starts
+    // counting when it is CALLED, which can be a fraction after the hint timer itself started.
+    const inRule = (s, step) => ok(s !== null && s >= 2 && s <= 4.5, "idle rule | Level 1 " + step + " hand waits ~3s (" + (s === null ? "never appeared" : s.toFixed(1) + "s") + ")");
 
     await ienv.advance(50);
     ienv.window.dispatchEvent(ienv.makeEvent("pointerdown", { clientX: 5, clientY: 5 }));

@@ -68,6 +68,15 @@ export function makeEnv(opts) {
     _sync() { this.el.className = [...this.set].join(" "); }
   }
 
+  // Deliberately NOT an El: a fragment is never rendered, never queried and never leaked, so it
+  // stays out of allElements (which the leak/queryselector passes walk).
+  class Fragment {
+    constructor() { this.children = []; this.parentElement = null; this.nodeType = 11; }
+    appendChild(c) { if (c.parentElement) c.parentElement._remove(c); c.parentElement = this; this.children.push(c); return c; }
+    removeChild(c) { this._remove(c); return c; }
+    _remove(c) { const i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); c.parentElement = null; }
+  }
+
   class El {
     constructor(tag) {
       this.tagName = (tag || "div").toUpperCase();
@@ -92,7 +101,13 @@ export function makeEnv(opts) {
     get isConnected() { let c = this; while (c) { if (c === body || c === documentElement) return true; c = c.parentElement; } return false; }
     get textContent() { return this._text; }
     set textContent(v) { this._text = v == null ? "" : String(v); this.children = []; }
-    appendChild(c) { if (c.parentElement) c.parentElement._remove(c); c.parentElement = this; this.children.push(c); return c; }
+    // A DocumentFragment appended to a parent DISSOLVES: its children move across and the fragment
+    // is left empty. engine.js builds a confetti burst off-document and inserts it in one go, so a
+    // shim that appended the fragment itself would have parented every star to a detached node.
+    appendChild(c) {
+      if (c instanceof Fragment) { const kids = c.children.splice(0); for (const k of kids) { k.parentElement = this; this.children.push(k); } return c; }
+      if (c.parentElement) c.parentElement._remove(c); c.parentElement = this; this.children.push(c); return c;
+    }
     insertBefore(c, ref) { if (c.parentElement) c.parentElement._remove(c); c.parentElement = this; if (!ref) { this.children.push(c); } else { const i = this.children.indexOf(ref); if (i < 0) this.children.push(c); else this.children.splice(i, 0, c); } return c; }
     removeChild(c) { this._remove(c); return c; }
     _remove(c) { const i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); c.parentElement = null; }
@@ -142,6 +157,7 @@ export function makeEnv(opts) {
     getElementById: (id) => byId[id] || allElements.find((e) => e.id === id) || null,
     createElement: (t) => new El(t),
     createTextNode: (t) => { const e = new El("text"); e.textContent = t; return e; },
+    createDocumentFragment: () => new Fragment(),
     querySelectorAll: (sel) => body.querySelectorAll(sel),
     addEventListener: (t, fn) => (docListeners[t] = docListeners[t] || []).push(fn),
     removeEventListener: (t, fn) => { const a = docListeners[t]; if (a) { const i = a.indexOf(fn); if (i >= 0) a.splice(i, 1); } },

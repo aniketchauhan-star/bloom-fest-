@@ -501,6 +501,7 @@ let lbdReady      = false;   // has the hidden game reported its engine is up?
 let lbdRecovered  = false;   // have we already spent this visit's one boot retry?
 let lbdRecoveryTimer = null;
 let lbdExitTimer  = null;
+let lbdNextTimer  = null;   // fallback: arm the shell's own Next if the game never offers one
 
 /* ---- The game's intro artwork, used in two places ----------------------
    …behind the iframe, so the overlay's first paint is already the picture the
@@ -680,16 +681,39 @@ function teardownLbd(rewarm) {
 }
 
 /* ---- The game has ENDED → offer the way out -----------------------------
-   The bridge has already waited out the closing voice-over, so by the time this
-   runs the celebration has had its moment. We do NOT turn the page here: the
-   reader leaves on their own tap, so a child who wants to sit and look at the
-   confetti can. The button is the only exit — the book's own NEXT is hidden
-   while the game is fullscreen and this page stays gated until exitLbd() runs. */
+   The game's OWN final screen now carries a gold Next (bottom-right, stage
+   1710,972) and tapping it posts "lbd-exit". That button is the exit: it is
+   authored inside the 1920×1080 stage, so it scales, hops and hints like every
+   other button the child has tapped for the last ten minutes, and this one below
+   would otherwise land in the very same corner — two gold Nexts stacked.
+
+   So this is now only a SAFETY NET. It arms on "lbd-complete" (the bridge has
+   waited out the closing voice-over by then) and fires well after any real tap
+   would have: if the game's button never appeared — an older build in a stale
+   cache, a torn-down frame, a script that failed after the final screen — the
+   shell's own Next appears and the reader is still not stranded.
+
+   We do NOT turn the page on either path: the reader leaves on their own tap, so
+   a child who wants to sit and look at the confetti can. Until one of them is
+   tapped the page stays gated and the book's own NEXT stays hidden. */
+const LBD_NEXT_FALLBACK_MS = 20000;   // comfortably past a real tap, short enough to rescue
+
+function armLbdNextFallback() {
+  clearTimeout(lbdNextTimer);
+  lbdNextTimer = setTimeout(function () {
+    lbdNextTimer = null;
+    showLbdNext();
+  }, LBD_NEXT_FALLBACK_MS);
+}
 function showLbdNext() {
   if (!lbdNext) { exitLbd(); return; }    // no button in the DOM → don't strand anyone
   lbdNext.hidden = false;
 }
+// Also disarms the fallback: every caller (exitLbd, resetLbd) is a path where the
+// ending is over, and a timer left running would pop the button onto the intro of
+// the next visit.
 function hideLbdNext() {
+  clearTimeout(lbdNextTimer); lbdNextTimer = null;
   if (lbdNext) lbdNext.hidden = true;
 }
 if (lbdNext) lbdNext.addEventListener("click", function () { exitLbd(); });
@@ -723,7 +747,9 @@ window.addEventListener("message", function (e) {
     lbdStarted = true;
     if (!lbdFullscreen) setLbdFullscreen(true);
   } else if (d.type === "lbd-complete") {
-    showLbdNext();                        // the reader taps it to read on
+    armLbdNextFallback();                 // the game offers its own Next; this only rescues
+  } else if (d.type === "lbd-exit") {
+    exitLbd();                            // …and that Next was tapped: fold up and read on
   }
 });
 

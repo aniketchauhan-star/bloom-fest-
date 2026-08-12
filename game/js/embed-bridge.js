@@ -224,6 +224,27 @@
       post("lbd-complete");
     }
 
+    /* -- EXIT -------------------------------------------------------------
+       The final screen carries its own Next button, and finishGame() announces
+       the tap as a window CustomEvent (plus a window.RB_ON_FINISH hook). Both
+       are listened for here so THAT button is the reader's way out of the game:
+       it is authored inside the stage, so it scales and hints like every other
+       button in the level, and the shell's own Next sits in the same corner.
+       The shell keeps its button as a delayed fallback, so a build whose final
+       screen never offers one still cannot strand a reader. */
+    var exited = false;
+    function exit() {
+      if (exited) return; exited = true;
+      complete();                 // the shell may not have seen the ending yet
+      post("lbd-exit");
+    }
+    window.addEventListener("royalbloom:finished", exit);
+    var origFinish = window.RB_ON_FINISH;
+    window.RB_ON_FINISH = function () {
+      try { if (typeof origFinish === "function") origFinish.apply(this, arguments); } catch (_) {}
+      exit();
+    };
+
     // SAFETY: a missing / blocked / un-decodable clip must never strand the learner
     // on a screen with no way out, so every wait below is bounded.
     var VO_GRACE_MS   = 1200;   // let the last word land, then the button appears

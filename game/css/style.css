@@ -6,7 +6,13 @@
   font-display: block;
 }
 
-* { margin: 0; padding: 0; box-sizing: border-box; }
+/* -webkit-tap-highlight-color kills the translucent blue/grey box Chrome and WebKit paint over a
+ * tapped element on Android and iOS. It clashes with the game's own art and its own tap feedback
+ * (the button already darkens and sinks under the finger), and it squared off the corners of every
+ * rounded card and pill. It is an INHERITED property, so html alone would normally do — but it is
+ * set on the universal selector deliberately: some Android WebViews honour it only on the element
+ * actually receiving the tap, and this game's tap targets are nested several levels deep. */
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 html, body {
   width: 100%; height: 100%; overflow: hidden;
@@ -50,13 +56,118 @@ html, body {
   user-select: none;
 }
 
-.node.pressed { filter: brightness(0.92); }
+/* ===== Real game buttons ==================================================================
+ * NO GLOW anywhere. A game button reads through SHAPE and DEPTH, not light:
+ *
+ *   IDLE     — the button sits at rest on its own base. The one asking to be pressed HOPS
+ *              (controllers.js) — the movement is the invitation, nothing is painted on.
+ *   PRESSED  — the face drops onto its base, squashes, and takes a shading pass. The authored art
+ *              (Button_Blue) already draws its own darker base strip along the bottom edge, so
+ *              pushing the face DOWN into that strip is the press this artwork was built for.
+ *
+ * The shading below is the colour half of the press; the drop and squash are the geometry half and
+ * live in engine.js (PRESS_DROP / PRESS_SX / PRESS_SY, driven by one 0..1 _pressT value).
+ *
+ * It is a CLASS, not an inline filter, on purpose: an inline filter set elsewhere would replace
+ * the pressed shading outright and the button would stop responding to its own press. */
+.node.pressed {
+  filter: brightness(0.80) saturate(0.94) contrast(1.05);
+}
 
-/* interactive cursors: a hand (pointer) on every tap target, grab/grabbing on draggables.
- * role="button" is stamped on every onClick target; draggables carry an inline "grab" (see
- * interaction.js) which wins over this rule while a placed item stays a plain tap target. */
-.node[role="button"] { cursor: pointer; }
+/* .rb-tappable marks a button that is currently inviting a press. It deliberately paints NOTHING —
+ * the hop is the whole affordance. It is kept as a state marker so QA (and any future styling) can
+ * tell at a glance which buttons are live. */
+
+/* ===== The final screen's button, drawn in CSS ============================================
+ * Built from CSS rather than the blue button sprite, because the blue reads as UI dropped on top
+ * of the scene. Everything in this world is warm — the parchment scrolls, the treasure box, the
+ * golden sparkles — and the genie himself is the only blue thing on screen. So the button is
+ * festival gold: it belongs to the picture instead of sitting on it.
+ *
+ * Deliberately restrained. One gradient, one raised base edge, one fine border line. No haloes, no
+ * bevels stacked on bevels — the hop and the press (both already shared with every other button)
+ * do the work, and a light travelling around the border is the only thing that says "magic". */
+.rb-magic-btn {
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 999px;
+  /* Contain the label's z-index. .node is position:absolute with NO z-index, so it does not create
+   * a stacking context — which means .rb-magic-label's z-index:1 would escape into the ROOT
+   * context and paint the word "Next" above every z-index:auto element on the stage, including the
+   * hint hand (the hand then looked like it was sliding BEHIND the text). isolate builds a stacking
+   * context here without touching layout, so that z-index only orders the label against the border
+   * light inside this button, and the button as a whole still stacks by DOM order. */
+  isolation: isolate;
+  background: linear-gradient(180deg, #ffdd8a 0%, #ffc44d 50%, #f7a81c 100%);
+  box-shadow:
+    inset 0 3px 0 rgba(255, 255, 255, 0.8),      /* top highlight: catches the light */
+    inset 0 -7px 0 rgba(176, 102, 8, 0.35),      /* inner shade above the base */
+    0 7px 0 #cd8410,                             /* the solid base it presses down onto */
+    0 12px 20px rgba(74, 41, 0, 0.30);           /* soft contact shadow on the path */
+}
+.rb-magic-label {
+  font-family: 'GameFont', sans-serif;
+  font-size: 44px;
+  line-height: 1;
+  color: #6d3c05;
+  letter-spacing: 1px;
+  white-space: nowrap;
+  text-shadow: 0 2px 0 rgba(255, 255, 255, 0.6);
+  position: relative; z-index: 1;         /* the label stays above the border light */
+}
+/* The magical touch: a light that TRAVELS AROUND THE BORDER. Drawn as an SVG outline rather than a
+ * CSS trick because a rounded pill has no honest CSS way to run a line around its edge — a rotating
+ * conic-gradient distorts on a non-square box, and the mask-composite ring technique is patchy on
+ * older tablets. An SVG stroke with an animated dash offset is exact, cheap, and works everywhere.
+ *
+ * Two strokes on the same outline: a faint continuous one so the border always reads as a fine gold
+ * line, and one short bright arc that travels around it. Geometry is tied to FINAL_NEXT (300x96) in
+ * controllers.js — a 297x93 pill with r=46.5 has a perimeter of ~700, which is where the dash
+ * numbers below come from. Change the button size and these two numbers change with it. */
+.rb-magic-rim {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.rb-magic-rim rect { fill: none; stroke-linecap: round; }
+.rb-rim-base {                             /* the border line itself, always present */
+  stroke: rgba(255, 246, 205, 0.55);
+  stroke-width: 2;
+}
+.rb-rim-arc {                              /* the light that runs around it */
+  stroke: #fffae0;
+  stroke-width: 3;
+  stroke-dasharray: 100 600;               /* one 100-long arc, 600 of gap = 700 perimeter */
+  filter: drop-shadow(0 0 4px rgba(255, 224, 130, 0.95));
+  animation: rb-rim-travel 2.9s linear infinite;
+}
+@keyframes rb-rim-travel { to { stroke-dashoffset: -700; } }
+@media (prefers-reduced-motion: reduce) {
+  /* no travelling light — the border line stays, so the button is still clearly outlined */
+  .rb-rim-arc { animation: none; opacity: 0; }
+}
+
+/* ---- interactive cursors: a hand on EVERYTHING you can interact with -----------------------
+ * The chain, so nothing can be missed:
+ *   tap targets   E.onClick stamps role="button" on every target it is given (engine.js), so this
+ *                 rule reaches the box, all three Next buttons, Try Again, Let's Go, the final
+ *                 button and both answer items — without any of them needing to opt in.
+ *   draggables    interaction.js writes an inline "grab" while an item is actually draggable; an
+ *                 inline style beats this rule, so a draggable shows the OPEN hand. When it is
+ *                 disabled that inline value is cleared, and a placed item that is now a tap target
+ *                 falls back to this rule and shows the pointing hand.
+ *   dragging      .rb-grabbing on <body> forces the CLOSED hand everywhere for the duration.
+ *   children      `cursor` is inherited, and nothing inside a button (the text span, the final
+ *                 button's label) sets its own — so hovering a child shows the parent's hand.
+ * The bare [role="button"] arm covers anything interactive that is not a layout node. */
+.node[role="button"], [role="button"] { cursor: pointer; }
 .rb-grabbing, .rb-grabbing * { cursor: grabbing !important; }
+
+/* The SECOND source of the blue box on touch. The engine gives every tap target tabindex="0" so it
+ * can be reached by keyboard, which means a tap also FOCUSES it — and several Android WebViews draw
+ * a default blue outline on :focus. Suppress that here; the real keyboard ring is restored by the
+ * :focus-visible rule below, which only matches genuine keyboard focus, never a tap. */
+.node[role="button"]:focus { outline: none; }
 
 /* keyboard focus ring for interactive nodes (does not affect mouse/touch) */
 .node[role="button"]:focus-visible {
@@ -73,7 +184,11 @@ html, body {
   width: 22px; height: 22px;
   pointer-events: none;
   z-index: 9999;
-  will-change: transform, opacity;
+  /* NO will-change here on purpose. It promotes EVERY particle to its own compositor layer, and a
+   * completion burst creates 60 of them in one go — 60 layers allocated on exactly the frame the
+   * scene is also changing, which is the stutter QA saw. transform/opacity composite fine without
+   * it, and the browser promotes what it actually needs. (MDN is explicit: don't apply will-change
+   * to many elements.) */
   /* 5-point star. The warm glow used to be two drop-shadow filters — two blur passes per particle per
    * frame, which is what made the box opening and the Part-4 finish stutter. The glow is now baked into
    * the fill (a radial gradient set per particle in engine.js), so this is paint-only: no blur pass. */
