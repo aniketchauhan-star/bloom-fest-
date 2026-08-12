@@ -141,7 +141,7 @@ window.ASSET_MANIFEST = {
   "game/js/data.js": 885391,
   "game/assets/audio/bgm.ogg": 1567229,
   "assets/4.webm": 2236795,
-  "assets/2.webm": 3223018,
+  "assets/2.webm": 3219299,
   "assets/3.webm": 3774901,
   "assets/1.webm": 4029473,
   "assets/5.webm": 4126760
