@@ -423,6 +423,14 @@
                 transform-style: preserve-3d; -webkit-transform-style: preserve-3d;
                 animation: idleBob 4.8s ease-in-out infinite; }
   .book-float.rest { animation: none; }
+  /* SETTLING the bob, not snapping it. .rest alone drops the animation, and the
+     transform reverts to translateY(0) in a single frame — so tapping PLAY while the
+     book was mid-bob jolted the WHOLE book (this is an ancestor of it) by up to 8px,
+     at the exact moment the reader's attention was on the cover starting to open.
+     settleIdleBob() in script.js freezes the live value inline and then glides it
+     home over this transition. Kept off .book-float itself so nothing else that ever
+     writes a transform here inherits a transition. */
+  .book-float.settling { transition: transform 320ms cubic-bezier(0.4, 0, 0.2, 1); }
   @keyframes idleBob {                          /* gentle float only — no rotation,
                                                    so the closed book stays square */
     0%, 100% { transform: translateY(0); }

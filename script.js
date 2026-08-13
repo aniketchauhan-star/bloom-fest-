@@ -1390,6 +1390,42 @@ function exitFullscreen() {
   } catch (_) {}
 }
 
+/* ---- Stop the idle bob WITHOUT jolting the book --------------------------
+   .book-float carries a 4.8s translateY(0 → -8px → 0) float, and it is an ancestor of
+   the entire book. Simply adding .rest (animation: none) reverts that transform in one
+   frame, so tapping PLAY at any point other than the exact bottom of the bob shoved
+   the whole book up by as much as 8px — measured at 5.5px — right as the cover began
+   to open. Nothing else in the transition moved; that jolt WAS the "sudden shift".
+   So: freeze the live value inline, drop the animation (the inline value now holds the
+   book perfectly still), then glide it home over .settling's transition. Same
+   first/last/invert/play shape as smoothRescale() below, for the same reason — the
+   browser must see the pre-change value flushed before the new one, or it animates
+   from the wrong place (or not at all). */
+const BOB_SETTLE_MS = 320;              // keep in sync with .book-float.settling
+let _bobSettleTimer = null;
+function settleIdleBob() {
+  if (!bookFloat) return;
+  const live = getComputedStyle(bookFloat).transform;
+  bookFloat.classList.remove("settling");
+  if (live && live !== "none") bookFloat.style.transform = live;   // FIRST: hold it here
+  bookFloat.classList.add("rest");                                 // animation off
+  void bookFloat.getBoundingClientRect();                          // flush as the start style
+  requestAnimationFrame(function () {
+    bookFloat.classList.add("settling");
+    bookFloat.style.transform = "translateY(0)";                   // LAST: glide home
+  });
+  clearTimeout(_bobSettleTimer);
+  _bobSettleTimer = setTimeout(clearIdleBobSettle, BOB_SETTLE_MS + 60);
+}
+/* Leave no transition or inline transform behind: the bob has to be free to run again
+   on the next Replay, and a stale transition here would slow it down. */
+function clearIdleBobSettle() {
+  clearTimeout(_bobSettleTimer); _bobSettleTimer = null;
+  if (!bookFloat) return;
+  bookFloat.classList.remove("settling");
+  bookFloat.style.transform = "";
+}
+
 /* ---- Open the 3D cover, then hand off to the page-turning book ----------
    Shared by the first open (openBook) AND Replay (replayBook), so the dramatic
    hinge-open + post-open setup are identical both times. */
@@ -1400,7 +1436,7 @@ function runOpenSequence() {
   // The whole open motion IS the cover's own hinge — NO zoom / camera move.
   book.classList.remove("closing");
   book.classList.add("open");          // cover hinges open on the LEFT spine
-  bookFloat.classList.add("rest");     // stop the idle bob
+  settleIdleBob();                     // stop the idle bob — GLIDING, never snapping
   coverScene.classList.remove("parked");
   flipbookEl.style.zIndex = "";        // cover ABOVE the pages while it swings open
   // Reveal the REAL page right away (it sits beneath the cover, masked by it).
@@ -1462,7 +1498,8 @@ function resetToStart() {
   flipbookEl.classList.remove("show");         // pages hidden behind the closed cover
   flipbookEl.style.zIndex = "";
   flipbookEl.style.pointerEvents = "none";
-  bookFloat.classList.remove("rest");          // resume the idle bob
+  clearIdleBobSettle();                        // drop the frozen transform + transition…
+  bookFloat.classList.remove("rest");          // …so the idle bob runs clean again
   tapCatcher.style.pointerEvents = "auto";     // Play is tappable again
   hideFlipHint(); clearTimeout(idleHintTimer); clearTimeout(nudgeHideTimer);
   // re-arm every content gate, so a fresh read gates its pages again
@@ -1675,6 +1712,7 @@ const SMOOTH_RESCALE_MS     = 300;   // keep in sync with body.is-rescaling in s
 const SMOOTH_RESCALE_WINDOW = 900;   // how long after the request a change still counts
 let _smoothRescaleUntil = 0;
 let _rescaleSettle = null;
+let _glideUntil = 0;                 // a one-off glide is in flight until this moment
 /* `captureBefore` — snapshot the pre-change geometry too. Only true where we are
    genuinely AHEAD of the change: the tap that REQUESTS fullscreen still sees the old
    viewport. By the time fullscreenchange fires the box may already have moved, and
@@ -1748,6 +1786,7 @@ function smoothRescale() {
     setRescaleFix(dx, dy, k);
     void flipScaleEl.getBoundingClientRect();
   }
+  _glideUntil = Date.now() + SMOOTH_RESCALE_MS + 80;   // a glide owns the book until then
   requestAnimationFrame(function () {               // PLAY: glide to identity
     document.body.classList.add("is-rescaling");
     setRescaleFix(0, 0, 1);
@@ -1755,8 +1794,31 @@ function smoothRescale() {
     _rescaleSettle = setTimeout(afterRescaleSettled, SMOOTH_RESCALE_MS + 80);
   });
 }
+
+/* ---- A SECOND EVENT FOR THE SAME CHANGE ----------------------------------
+   Entering fullscreen fires BOTH `resize` and `fullscreenchange`, a frame or two
+   apart, and both routed here. The second one used to re-enter smoothRescale() while
+   the first glide was still running — and its first two acts are to drop .is-rescaling
+   and write the identity transform, which lands the book on its NEW size with no
+   transition at all. Measured: the size covered 435px of its 380px journey in a single
+   frame (88% of the whole motion) and then only the POSITION glided, so the canvas
+   popped bigger and slid downward. That was the flicker.
+   So a glide, once running, is not restarted. Almost always the second event carries
+   no new information — the fit it computes is identical — and the right answer is to
+   leave the running glide alone. If the viewport really did change again (a resize
+   arriving during the fullscreen glide), we re-aim, starting from where the book is
+   RIGHT NOW so the motion stays continuous instead of teleporting. */
+function retargetGlide() {
+  const now = flipScaleEl.getBoundingClientRect();     // where it LOOKS right now, mid-glide
+  const before = flipScaleEl.style.getPropertyValue("--book-scale");
+  fitScale();
+  if (flipScaleEl.style.getPropertyValue("--book-scale") === before) return;   // duplicate → no-op
+  if (now.width > 0) _bookRestRect = now;              // continue from the current position
+  smoothRescale();
+}
 function afterRescaleSettled() {
   document.body.classList.remove("is-rescaling");
+  _glideUntil = 0;                        // the book is nobody's to hold onto now
   setRescaleFix(0, 0, 1);                 // leave the chain at identity, not mid-glide
   rememberBookRect();                     // this is the new resting geometry
   // Anything parked against the book's rect was measured MID-glide, so it is
@@ -1766,7 +1828,21 @@ function afterRescaleSettled() {
 }
 
 function onViewportChange() {
-  if (Date.now() < _smoothRescaleUntil) {
+  /* ONE-OFF (glide) or CONTINUOUS (follow instantly)?
+     Two things say one-off:
+       • we are inside the window opened when fullscreen was REQUESTED, or
+       • the cover is mid-open — `opened && !ready` is true only during the hinge.
+     The second is not belt-and-braces. The fullscreen viewport change can arrive far
+     later than the request: measured at tap+2556ms here, because the same tap also
+     starts a 1080p video and the main thread is busy through the whole request. That
+     is nowhere near the 900ms window, so it used to fall through to the drag path and
+     snap the book 30px sideways and 69px smaller in ONE frame, halfway through the
+     6s hinge. A viewport change while the book is opening is never a drag-resize
+     worth following frame-for-frame, so glide it. */
+  if (Date.now() < _smoothRescaleUntil || (opened && !ready)) {
+    // Already gliding? Then this is fullscreen's second event for the same change (or a
+    // duplicate). Never restart a glide mid-flight — see retargetGlide.
+    if (Date.now() < _glideUntil) { retargetGlide(); return; }
     smoothRescale();
     return;
   }
