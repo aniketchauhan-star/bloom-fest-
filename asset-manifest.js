@@ -143,6 +143,6 @@ window.ASSET_MANIFEST = {
   "assets/4.webm": 2236795,
   "assets/2.webm": 3219299,
   "assets/3.webm": 3774901,
-  "assets/1.webm": 4029473,
+  "assets/1.webm": 4034200,
   "assets/5.webm": 4126760
 };

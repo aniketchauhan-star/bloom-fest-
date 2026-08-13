@@ -124,14 +124,18 @@ function makeMedia(page, pageIndex) {
     // When THIS page's video FULLY finishes: (0) OPEN THIS PAGE'S GATE — the whole
     // clip has been watched, so the forward arrow may now appear (see VIDEO GATE);
     // (1) start the 5s countdown to the page-flip tutorial nudge (so the nudge never
-    // fights the video for attention). Only (0) is unconditional: the gate must open
-    // even if the reader is mid-flip or the book isn't "ready" yet, or the page would
-    // be a dead end with no way forward.
+    // fights the video for attention).
     // The "look at me" GLOW PULSE on the forward arrow is NOT fired from here — it
-    // hangs off the arrow actually becoming visible, in setNav(). Tying it to "ended"
-    // put the cue in the wrong place on a re-visited page, where the arrow is already
-    // unlocked on arrival and the clip finishing half a minute later is not news.
+    // hangs off the arrow actually becoming visible, in setNav(), which now happens
+    // on every visit (each one re-gates the page, so each one gets the cue).
+    // ⚠ ONLY THE PAGE ON SCREEN MAY OPEN ITS OWN GATE. A clip left running as the
+    // reader flips away can fire "ended" long after the fact, and because every
+    // visit is re-gated (see refreshMedia) that stale event would otherwise unlock a
+    // page whose scene has not been watched THIS time round — the exact "NEXT is
+    // already enabled when I come back" bug. The gate is not lost by refusing here:
+    // arriving on the page re-arms both watchdogs, so it can never become a dead end.
     media.addEventListener("ended", function () {
+      if (flipped !== pageIndex) return;                 // stale "ended" from a page we left
       markVideoWatched(pageIndex);
       if (!opened || !ready || lbdFullscreen || flipped >= totalPages - 1) return;
       if (!leaves[flipped] || !leaves[flipped].contains(media)) return;   // only the current page
@@ -146,7 +150,12 @@ function makeMedia(page, pageIndex) {
     // file is still sitting on the server. Revert to it and carry on.
     media.addEventListener("error", function () {
       if (revertBlob(media)) return;                  // recovered — let it try again
-      markVideoWatched(pageIndex);                    // genuinely broken → don't strand
+      // Genuinely broken → don't strand. Recorded as PERMANENTLY broken rather than
+      // as "watched", because a re-visit wipes the watched flag (every visit is a
+      // fresh visit) and the error will not fire a second time — so the flag has to
+      // be the kind that survives. isNextLocked() never gates a broken clip.
+      videoBroken[pageIndex] = true;
+      updateProgress();
     });
   } else {
     media.decoding = "async";
@@ -634,19 +643,19 @@ function updateLbdOverlay() {
   if (LBD_INDEX < 0 || !lbdStage) return;
   const onLbd = opened && ready && !animating && flipped === LBD_INDEX;
   if (onLbd) {
-    /* ---- THE GAME PAGE IS GATED ON EVERY VISIT --------------------------
-       NEXT must never be on screen here: the only way forward is to finish the
-       game. Completing it calls clearGate(), and that has to be undone when the
-       reader comes BACK, or a second visit would show NEXT and let them walk
-       straight past an activity they are being asked to do. The iframe is torn
-       down and re-booted on every visit too, so the game they return to really
-       is a fresh one — the gate has to match it.
+    /* ---- THE GAME PAGE IS GATED UNTIL IT HAS BEEN PLAYED ----------------
+       On a first visit NEXT must never be on screen here: the only way forward is
+       to finish the game. Once it HAS been finished, coming back leaves the gate
+       open — the reader is free to move on again without being asked for the whole
+       activity a second time. (The iframe is still torn down and re-booted on
+       every visit, so the game itself is a fresh one to play if they want it;
+       what carries over is only their having done it, in `pageCompleted`.)
        Re-armed on a FRESH ARRIVAL only (lbdWasOn is still false here). Doing it
        on every refresh would slam the gate shut again in the moment between
        exitLbd()'s clearGate() and its goNext(), and trap the reader on the page
        they had just finished. */
     if (!lbdWasOn) {
-      gatesCleared[LBD_INDEX] = false;
+      gatesCleared[LBD_INDEX] = !!pageCompleted[LBD_INDEX];
       updateProgress();
     }
     ensureLbdLoaded();                    // no-op in practice: already warm
@@ -860,6 +869,47 @@ let mediaDelayTimer = null;   // pending "start this video after N ms" timer
 let mediaDelayIdx = -1;       // which page that pending timer belongs to
 let lastMediaIdx = -1;        // last page refreshMedia handled (to arm the blink once)
 
+/* VISIT TOKEN — bumped on every fresh arrival (see refreshMedia). Anything async
+   that belongs to one visit captures it and bails out if it has moved on: a pending
+   start-delay, a queued rewind, a watchdog re-arm. Without it a callback from the
+   PREVIOUS visit to a page can still fire after the reader has come back to it, and
+   a stale callback is exactly what un-gates a page that has not been watched yet. */
+let visitToken = 0;
+
+/* Put a clip back on its FIRST FRAME, for real.
+   `v.currentTime = 0` is normally enough and takes effect synchronously — including
+   on a clip that has played to the end, which is the case that matters most (it
+   clears `ended` as well as the timestamp, so the element is a fresh scene again and
+   not a last frame waiting to be re-shown).
+   It can still be dropped, though, on an element with no metadata yet — every clip
+   starts on preload="none", and one that has just been re-loaded (see revertBlob)
+   goes back there — and a dropped rewind is a scene that carries on from the middle
+   of the previous visit. So the seek is re-applied once the element knows enough to
+   perform it, using LOAD events only: `canplay` also fires when a mid-scene buffer
+   stall refills, and that would snap a scene the reader is watching back to 00:00.
+   Guarded by the visit token, and it replaces its own pending retry, so flipping
+   back and forth can neither restart the wrong visit nor pile listeners onto the
+   element. */
+function rewindToStart(v, token) {
+  if (v._pendingRewind) {                             // drop an earlier visit's retry
+    v.removeEventListener("loadedmetadata", v._pendingRewind);
+    v.removeEventListener("loadeddata", v._pendingRewind);
+    v._pendingRewind = null;
+  }
+  try { v.currentTime = 0; } catch (_) {}
+  if (v.readyState >= 1 /* HAVE_METADATA */ && v.currentTime < 0.05) return;   // it took
+  const fix = function () {
+    v.removeEventListener("loadedmetadata", fix);      // one shot, however it got here
+    v.removeEventListener("loadeddata", fix);
+    v._pendingRewind = null;
+    if (token !== visitToken) return;                  // an older visit — not ours to touch
+    try { if (v.currentTime > 0.05) v.currentTime = 0; } catch (_) {}
+  };
+  v._pendingRewind = fix;
+  v.addEventListener("loadedmetadata", fix);
+  v.addEventListener("loadeddata", fix);
+}
+
 /* `restart` = the reader has just ARRIVED on this page, so the scene must begin at
    00:00 — animation and voiceover together, however the page was left last time.
    Without it a clip that was interrupted mid-scene resumed from wherever it was
@@ -869,14 +919,21 @@ let lastMediaIdx = -1;        // last page refreshMedia handled (to arm the blin
    starts, once when it settles ~FLIP_MS later); rewinding on both would restart
    every scene a beat after it began. Only the arrival call passes true — see the
    `arrived` flag in refreshMedia(). */
-function playVideoNow(v, restart) {
+function playVideoNow(v, restart, token) {
   try {
     v.preload = "auto";                       // make sure it's buffering before we play
-    if (restart || v.ended) v.currentTime = 0;
+    if (restart || v.ended) rewindToStart(v, token === undefined ? visitToken : token);
     v.muted = false;                          // try WITH sound (primed in the Play gesture)
     const p = v.play();
     if (p && p.catch) p.catch(function () { v.muted = true; v.play().catch(function () {}); });
   } catch (_) {}
+}
+
+/* Every playable element on one page — video today, plus any <audio> a future page
+   holds. The "stop everything else" sweeps go through this so they cover a whole page
+   rather than only the kind of media the pages list happens to use right now. */
+function pageMedia(leaf) {
+  return leaf ? Array.prototype.slice.call(leaf.querySelectorAll("video.page-media, audio.page-media")) : [];
 }
 
 /* Buffer ONE page's video on demand (only the current + next page are ever
@@ -916,32 +973,50 @@ function refreshMedia() {
   const arrived = (idx !== lastMediaIdx);
   if (arrived) {
     lastMediaIdx = idx;
-    /* ---- ALREADY-SEEN PAGES ARE NEVER GATED AGAIN ------------------------
-       The video gate is there so a FIRST-time reader watches the whole scene
-       before moving on. It should not follow them around afterwards: turning
-       back to look at an earlier page and then forward again used to re-lock
-       NEXT, because that page's clip had been interrupted rather than finished
-       — so the reader was made to sit through a scene they'd already been
-       shown, with no way forward. On any RE-arrival we open the gate at once,
-       so both BACK and NEXT are there and they can move freely.
-       Note this deliberately covers video gates only. A page gated by
-       CONTENT — the game — is an activity, not a scene, and has to be
-       completed on each visit; see updateLbdOverlay. */
-    if (pageSeen[idx] && pageHasVideoGate(idx)) markVideoWatched(idx);
-    pageSeen[idx] = true;
+    /* ---- EVERY VISIT REPLAYS THE SCENE; ONLY UNSEEN PAGES GATE -----------
+       Landing on a page always starts its media over from 00:00 — no page ever
+       resumes mid-sentence or sits on the last frame of a previous visit — and
+       resetGatesOnArrival() then decides whether the story is held here:
+         • never completed  → gated. NEXT is gone until the scene has run.
+         • completed before → open. NEXT is waiting once the turn lands, so
+           turning back to look at something never costs the reader the whole
+           scene again to get forward.
+       It is deliberately type-agnostic, so no page drifts into being the
+       exception, and it cannot open a route past anything new: forward motion
+       has always required finishing the page you are on.
+       Bumping the visit token first is what makes it safe: every timer,
+       "ended" handler and queued rewind still owned by the PREVIOUS visit is
+       stale from this line onwards and cannot open a gate behind our back. */
+    visitToken++;
+    resetGatesOnArrival(idx);
   }
-  // Left the page a delayed video was counting down on? Cancel that countdown.
-  if (mediaDelayTimer && mediaDelayIdx !== idx) {
+  // Left the page a delayed video was counting down on — or arrived on one afresh?
+  // Cancel that countdown. (Arrival re-arms it below; without clearing it here the
+  // old timer would survive alongside the new one and fire the scene twice.)
+  if (mediaDelayTimer && (arrived || mediaDelayIdx !== idx)) {
     clearTimeout(mediaDelayTimer); mediaDelayTimer = null; mediaDelayIdx = -1;
   }
   // Buffer + gesture-unlock ONLY this page and the next (so the upcoming flip is
   // instant and keeps sound) — never all 25 videos at once.
   warmVideo(idx); warmVideo(idx + 1); primeVideo(idx + 1);
-  // Pause every video that is NOT the current page.
+  // SILENCE + REWIND every OTHER page's media, so only the page on screen can make a
+  // sound or hold a playhead. Pausing alone left each clip parked on its own
+  // timestamp and last painted frame: coming back showed that frame before playback
+  // took over, and any clip a browser resumed on its own (tab restore, a stray
+  // play()) talked over the page the reader was actually on. Muting them is
+  // belt-and-braces — playVideoNow un-mutes the one page it starts.
+  // pageMedia() rather than a video-only query, so an <audio> page — should the pages
+  // list ever grow one — is silenced by the same sweep instead of being the one kind
+  // of media that can play over the top of another page.
   leaves.forEach(function (leaf, i) {
     if (i === idx) return;
-    const v = leaf.querySelector("video.page-media");
-    if (v) { try { v.pause(); } catch (_) {} }
+    pageMedia(leaf).forEach(function (m) {
+      try {
+        m.pause();
+        m.muted = true;
+        if (m.currentTime > 0) m.currentTime = 0;
+      } catch (_) {}
+    });
   });
   // Start (or schedule) the current page's video.
   const cur = leaves[idx];
@@ -956,15 +1031,19 @@ function refreshMedia() {
       // already fired, and honouring that stale match would skip the rewind.
       if (!arrived && mediaDelayIdx === idx && (mediaDelayTimer || !v.paused)) { /* keep going */ }
       else {
-        try { v.pause(); v.currentTime = 0; } catch (_) {}   // hold on the first frame
+        const token = visitToken;
+        try { v.pause(); } catch (_) {}
+        rewindToStart(v, token);                              // hold on the FIRST frame
         mediaDelayIdx = idx;
         mediaDelayTimer = setTimeout(function () {
           mediaDelayTimer = null;
-          if (flipped === idx) playVideoNow(v);               // only if still on this page
+          // Still on this page, and still the same visit — a countdown started by an
+          // earlier visit must never start a scene for the current one.
+          if (flipped === idx && token === visitToken) playVideoNow(v, true, token);
         }, delayMs);
       }
     } else {
-      playVideoNow(v, arrived);                 // no delay → instant, from 00:00 on arrival
+      playVideoNow(v, arrived, visitToken);     // no delay → instant, from 00:00 on arrival
     }
     armVideoWatchdog(idx, v);                   // NEXT waits on "ended" — don't let a dead clip strand us
   } else {
@@ -983,27 +1062,47 @@ function refreshMedia() {
    for instance): mark such a page `gate: true` in the pages list above (an "lbd"
    game page is gated automatically) and the forward flip stays LOCKED — NEXT is
    hidden, and every route into goNext() refuses — until clearGate() is called for
-   it. Ungated pages (all of them right now) are never locked. */
+   it. Ungated pages are never locked.
+   Like the video gate, this is PER VISIT: arriving on a gated page re-arms it (see
+   resetGatesOnArrival), so a second visit asks for the activity again instead of
+   waving the reader through on the strength of having finished it once. */
 const gatesCleared = Object.create(null);
 function pageIsGated(i) {
   const p = pages[i];
   return !!p && (p.gate === true || p.type === "lbd");
 }
-function clearGate(i) { gatesCleared[i] = true; updateProgress(); }
+function clearGate(i) { gatesCleared[i] = true; pageCompleted[i] = true; updateProgress(); }
 
 /* ---- VIDEO GATE ---------------------------------------------------------
    A video page holds the story until its clip has FULLY played: NEXT is HIDDEN
-   while the video runs and appears — with the gold blink cue — the moment it
-   ends, so the reader watches the whole scene, then taps to turn the page.
-   Watched-once is remembered PER PAGE, so flipping BACK to a page you already
-   finished shows NEXT straight away instead of making you sit through it again.
+   while the video runs and appears — with the gold glow cue — the moment it ends,
+   so the reader watches the whole scene, then taps to turn the page.
+   GATED UNTIL WATCHED ONCE, then open on the way back. The flag is re-evaluated
+   every time the reader lands on the page (resetGatesOnArrival, from refreshMedia):
+   a scene they have never sat through gates the page, and one they HAVE leaves NEXT
+   waiting for them as soon as the turn lands. Either way the clip itself restarts at
+   00:00 — coming back to a page always replays its scene from the first frame, it
+   just doesn't hold the story hostage to it a second time.
    Image pages and THE END are never video-gated.
    ESCAPE HATCHES (a page with no way forward is worse than an unwatched clip):
    the gate also opens on a media error, and on the stall watchdog below. */
 const videoWatched = Object.create(null);
-// Which pages the reader has already landed on at least once. Used by refreshMedia
-// to stop re-gating a scene they have already been shown.
-const pageSeen = Object.create(null);
+// Clips that can never play at all (missing file, bad codec, dead decoder). Unlike
+// `videoWatched` this is NOT cleared on re-visit: the "error" event fires once, so a
+// flag that a re-visit wiped would leave the page gated on an event that will never
+// come again. Such a page is simply never gated.
+const videoBroken = Object.create(null);
+/* ---- HOW FAR THE READER HAS GOT --------------------------------------------
+   Pages whose gate has been SATISFIED at least once this read — a clip watched to
+   the end, an activity finished. This is what lets the reader move BACK and FORWARD
+   again freely: arriving on a page that is already in here leaves its gate open, so
+   NEXT is waiting once the turn lands instead of asking for the scene a second time.
+   It is not a way past anything new. Moving forward has always required finishing the
+   page you are on, so a page can only get in here by actually being completed, and a
+   page the reader has never completed is still gated on arrival exactly as before —
+   the skip the gate exists to prevent is still impossible.
+   Cleared by Replay (resetToStart), so a fresh read earns every page again. */
+const pageCompleted = Object.create(null);
 function pageHasVideoGate(i) {
   const p = pages[i];
   return !!p && p.type === "video";
@@ -1011,11 +1110,42 @@ function pageHasVideoGate(i) {
 function markVideoWatched(i) {
   if (videoWatched[i]) return;
   videoWatched[i] = true;
+  pageCompleted[i] = true;                              // …and remembered for the read
   updateProgress();                                     // → NEXT appears on this page
+}
+/* ---- RE-LOCK A PAGE ON ARRIVAL -------------------------------------------
+   Called for EVERY page the reader lands on, whatever its type, so a revisit has to
+   earn NEXT exactly like a first visit. It covers BOTH kinds of gate, because a gate
+   that is remembered for the life of the read is a gate that can be walked past by
+   flipping away and back:
+     • VIDEO pages   — the clip must play through again.
+     • GATED pages   — `gate: true`, and the game — the activity must be done again.
+   A page with neither (an image, THE END) has nothing to re-lock and simply falls
+   through to the updateProgress() below, so arrival leaves the controls in the one
+   state isNextLocked() says they should be in — no page type is a special case.
+   updateProgress() runs here rather than being left to the caller so the arrow is
+   gone in the same frame the page is revealed, never live for a moment on a scene
+   that has just gone back to 00:00. */
+function resetGatesOnArrival(i) {
+  // Already finished this page once? Then it stays open, and NEXT is there as soon as
+  // the turn lands — flipping back to look at something must not cost the reader the
+  // scene all over again to get forward. Never finished it? Gate it, first visit or
+  // fifth. `done` is the whole difference between "coming back" and "arriving".
+  const done = !!pageCompleted[i];
+  if (pageHasVideoGate(i)) {
+    if (done) videoWatched[i] = true; else delete videoWatched[i];
+  }
+  // The game page ALSO re-arms itself in updateLbdOverlay(), where the timing around
+  // exitLbd() is delicate (see the note there) — it reads `pageCompleted` too, so the
+  // two agree. Uniform across every gated page rather than special-cased for the one
+  // page that happens to hold a game.
+  if (pageIsGated(i)) gatesCleared[i] = done;
+  updateProgress();
 }
 function isNextLocked() {
   if (lbdFullscreen) return true;                       // a fullscreen game owns the screen
   if (pageIsGated(flipped) && !gatesCleared[flipped]) return true;
+  if (videoBroken[flipped]) return false;               // clip can never play → never trap them
   return pageHasVideoGate(flipped) && !videoWatched[flipped];   // clip must finish first
 }
 
@@ -1045,19 +1175,25 @@ function stopVideoWatchdog() {
 function armVideoWatchdog(idx, v) {
   stopVideoWatchdog();
   if (!v || !pageHasVideoGate(idx) || videoWatched[idx]) return;
+  // Which visit these watchdogs belong to. Both of them can only ever open the gate
+  // for the visit that armed them: they are the one part of the gate that unlocks on
+  // a TIMER rather than on the clip finishing, so a leftover tick from the previous
+  // visit is the easiest way for NEXT to light up on a scene nobody has watched.
+  const token = visitToken;
 
   // (3a) DURATION watchdog — the clip's own length plus grace. Catches the case the
   // stall poller cannot see: playback that runs to the end but never fires "ended".
   // The clip is local (blob) by now, so duration is usually known immediately; if
   // metadata has not arrived yet we wait for it, and fall back to a hard ceiling.
   const armByDuration = function () {
+    if (token !== visitToken) return;                   // metadata for a visit we've left
     if (_durationTimer) clearTimeout(_durationTimer);
     const d = (isFinite(v.duration) && v.duration > 0) ? v.duration * 1000 : 0;
     const delay = d ? Math.min(d + WATCHDOG_GRACE_MS, WATCHDOG_MAX_MS)
                     : WATCHDOG_MAX_MS;
     const startDelay = (pages[idx] && pages[idx].delay) ? pages[idx].delay : 0;
     _durationTimer = setTimeout(function () {
-      if (flipped === idx && !videoWatched[idx]) markVideoWatched(idx);
+      if (flipped === idx && token === visitToken && !videoWatched[idx]) markVideoWatched(idx);
     }, delay + startDelay);
   };
   armByDuration();
@@ -1071,7 +1207,7 @@ function armVideoWatchdog(idx, v) {
   // while the tab is hidden (we pause videos there on purpose).
   let lastTime = -1, strikes = 0;
   _watchdogTimer = setInterval(function () {
-    if (flipped !== idx || videoWatched[idx]) { stopVideoWatchdog(); return; }
+    if (flipped !== idx || token !== visitToken || videoWatched[idx]) { stopVideoWatchdog(); return; }
     if (document.hidden) return;                                  // paused by us, not stuck
     if (mediaDelayTimer && mediaDelayIdx === idx) return;         // still in its start delay
     if (v.currentTime > lastTime + 0.05) { lastTime = v.currentTime; strikes = 0; return; }
@@ -1193,12 +1329,24 @@ function pulseNav(btn) {
 
 function setNav(btn, hidden) {
   if (!btn) return;
+  const wasHidden = btn.classList.contains("is-hidden");
+  /* ---- A CONTROL ONLY APPEARS ON A SETTLED PAGE ------------------------------
+     Hiding happens the instant it is called — a dead control must never linger.
+     APPEARING waits for the page-turn to finish. Turning back to a page used to put
+     the arrow on screen at the very start of the flip, so it hung there over a page
+     that was still swinging round, halfway through the turn, and it read as arriving
+     before the page it belonged to. The turn lands, THEN the arrow is offered.
+     Nothing is lost by waiting: canTurn() refuses every flip while one is in flight,
+     so an arrow shown mid-turn is a control that does nothing when tapped. The
+     settle timer (scheduleSettle) calls updateProgress() the moment `animating`
+     clears, which is where the deferred appearance actually happens — and the glow
+     cue below then fires on a still page instead of a moving one. */
+  if (!hidden && wasHidden && animating) return;
+  btn.classList.toggle("is-hidden", hidden);
+  btn.disabled = hidden;
   // Fire the cue on the HIDDEN → VISIBLE transition only. updateProgress() runs on
   // every flip, gate change and overlay toggle, so without this the arrow would
   // pulse continuously the whole time it was on screen.
-  const wasHidden = btn.classList.contains("is-hidden");
-  btn.classList.toggle("is-hidden", hidden);
-  btn.disabled = hidden;
   if (btn === cornerNext && wasHidden && !hidden) pulseNav(btn);
 }
 function updateProgress() {
@@ -1291,10 +1439,12 @@ function resetToStart() {
   settleFlip();                                // drop any page-turn still in flight
   renderLeaves();
   leaves.forEach(function (leaf) {
-    var vv = leaf.querySelector("video.page-media");
-    if (vv) { try { vv.pause(); vv.currentTime = 0; } catch (_) {} }
+    pageMedia(leaf).forEach(function (m) {
+      try { m.pause(); m.muted = true; m.currentTime = 0; } catch (_) {}
+    });
   });
   lastMediaIdx = -1;
+  visitToken++;                                // orphan every timer the last read left running
   document.body.classList.remove("is-open", "is-closing");
   book.classList.remove("open", "closing");
   coverScene.classList.remove("parked");
@@ -1307,13 +1457,17 @@ function resetToStart() {
   hideFlipHint(); clearTimeout(idleHintTimer); clearTimeout(nudgeHideTimer);
   // re-arm every content gate, so a fresh read gates its pages again
   Object.keys(gatesCleared).forEach(function (k) { delete gatesCleared[k]; });
-  // …and every VIDEO gate too: a fresh read plays each clip through again before
-  // its NEXT appears. Clearing `pageSeen` is what makes that true — otherwise the
-  // "already seen it" unlock would carry over from the previous read and the whole
-  // second read would be ungated.
+  // …and every VIDEO gate too, so a fresh read plays each clip through again before
+  // its NEXT appears. (Arriving on a page re-locks it anyway now — see
+  // resetVideoGate — so this is belt-and-braces rather than the only thing holding
+  // the second read's gates shut. `videoBroken` is deliberately NOT cleared: a clip
+  // that cannot decode cannot decode on the second read either, and its "error" has
+  // already been and gone.)
   stopVideoWatchdog();
   Object.keys(videoWatched).forEach(function (k) { delete videoWatched[k]; });
-  Object.keys(pageSeen).forEach(function (k) { delete pageSeen[k]; });
+  // …and forget how far the last read got, or the whole second read would open
+  // ungated: resetGatesOnArrival() leaves any page in `pageCompleted` unlocked.
+  Object.keys(pageCompleted).forEach(function (k) { delete pageCompleted[k]; });
   try { bgMusic.pause(); bgMusic.currentTime = 0; } catch (_) {}   // restarts on Play
   updateProgress();                            // back on the cover → both controls gone
 }
