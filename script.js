@@ -999,23 +999,26 @@ function refreshMedia() {
   // Buffer + gesture-unlock ONLY this page and the next (so the upcoming flip is
   // instant and keeps sound) — never all 25 videos at once.
   warmVideo(idx); warmVideo(idx + 1); primeVideo(idx + 1);
-  // SILENCE + REWIND every OTHER page's media, so only the page on screen can make a
-  // sound or hold a playhead. Pausing alone left each clip parked on its own
-  // timestamp and last painted frame: coming back showed that frame before playback
-  // took over, and any clip a browser resumed on its own (tab restore, a stray
-  // play()) talked over the page the reader was actually on. Muting them is
-  // belt-and-braces — playVideoNow un-mutes the one page it starts.
+  // SILENCE every OTHER page's media, so only the page on screen can make a sound.
+  // Muting as well as pausing is belt-and-braces against a clip a browser resumes on
+  // its own (tab restore, a stray play()) talking over the page the reader is actually
+  // on; playVideoNow un-mutes the one page it starts.
+  // ⚠ THE PICTURE IS LEFT ALONE — deliberately. This used to rewind them too, and that
+  // was wrong for one simple reason: the page being turned is ON SCREEN for the whole
+  // ~1.15s of the flip. Rewinding it here meant the scene the reader had just finished
+  // snapped back to its opening frame and played that while it rotated away — measured
+  // at 48 visible frames of it. A page turning away should hold the last thing it
+  // showed. Nothing is lost by not rewinding: restarting a scene belongs to ARRIVING on
+  // it (playVideoNow → rewindToStart, in the arrival branch below), which runs before
+  // the incoming page is ever painted, so a revisit still opens at 00:00 and no page
+  // ever shows a stale frame.
   // pageMedia() rather than a video-only query, so an <audio> page — should the pages
   // list ever grow one — is silenced by the same sweep instead of being the one kind
   // of media that can play over the top of another page.
   leaves.forEach(function (leaf, i) {
     if (i === idx) return;
     pageMedia(leaf).forEach(function (m) {
-      try {
-        m.pause();
-        m.muted = true;
-        if (m.currentTime > 0) m.currentTime = 0;
-      } catch (_) {}
+      try { m.pause(); m.muted = true; } catch (_) {}
     });
   });
   // Start (or schedule) the current page's video.
