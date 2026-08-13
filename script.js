@@ -1332,15 +1332,17 @@ function setNav(btn, hidden) {
   const wasHidden = btn.classList.contains("is-hidden");
   /* ---- A CONTROL ONLY APPEARS ON A SETTLED PAGE ------------------------------
      Hiding happens the instant it is called — a dead control must never linger.
-     APPEARING waits for the page-turn to finish. Turning back to a page used to put
-     the arrow on screen at the very start of the flip, so it hung there over a page
-     that was still swinging round, halfway through the turn, and it read as arriving
-     before the page it belonged to. The turn lands, THEN the arrow is offered.
+     APPEARING waits for the page-turn to finish, so no control is ever offered over
+     a page that is still swinging round. The turn lands, THEN it is offered.
      Nothing is lost by waiting: canTurn() refuses every flip while one is in flight,
-     so an arrow shown mid-turn is a control that does nothing when tapped. The
-     settle timer (scheduleSettle) calls updateProgress() the moment `animating`
-     clears, which is where the deferred appearance actually happens — and the glow
-     cue below then fires on a still page instead of a moving one. */
+     so a control shown mid-turn does nothing when tapped. The settle timer
+     (scheduleSettle) calls updateProgress() the moment `animating` clears, which is
+     where the deferred appearance actually happens — and the glow cue below then
+     fires on a still page instead of a moving one.
+     NEXT additionally goes away FOR the whole turn (see updateProgress), which this
+     alone could not do: deferring an appearance does nothing about an arrow that was
+     already on screen before the turn started. BACK is left as it is, continuously
+     visible mid-book, so an ordinary page turn does not blink it off and on. */
   if (!hidden && wasHidden && animating) return;
   btn.classList.toggle("is-hidden", hidden);
   btn.disabled = hidden;
@@ -1354,10 +1356,18 @@ function updateProgress() {
   // BACK  — gone until the book is ready, on the first page / the cover, and for
   // the whole time the game is up (there is no book behind it to go back to).
   setNav(cornerPrev, !ready || flipped <= 0 || lbdFullscreen);
-  // NEXT  — gone until ready, on the last page, and while this page's gate is shut
-  // (on a video page that means: hidden until the clip has played all the way
-  // through — see VIDEO GATE — so it appears exactly when there is more to read).
-  setNav(cornerNext, !ready || onLast || isNextLocked());
+  // NEXT  — gone until ready, on the last page, WHILE A PAGE IS TURNING, and while
+  // this page's gate is shut (on a video page that means: hidden until the clip has
+  // played all the way through — see VIDEO GATE — so it appears exactly when there is
+  // more to read).
+  // `animating` is in there so the arrow is never on screen over a page that is still
+  // swinging round. Deferring only its APPEARANCE was not enough: turning between two
+  // pages that are both open (flipping back to a scene already watched, most often)
+  // left an arrow that was already up simply sitting there through the whole turn.
+  // canTurn() refuses every flip while one is in flight, so that arrow could not be
+  // used anyway — it just looked like it belonged to a page that had not arrived yet.
+  // It comes back, with its glow cue, from the updateProgress() the settle timer runs.
+  setNav(cornerNext, !ready || onLast || animating || isNextLocked());
 }
 
 /* ---- Fullscreen: go FULLSCREEN when the book opens (the Play tap is the user
