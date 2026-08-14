@@ -176,17 +176,54 @@ var AudioManager = (function () {
   function narrationActive() { return !!(narration && !narration.paused); }
 
   // -------- one-shot SFX --------
+  // DECODED ONCE, PLAYED FROM MEMORY.
+  // These used to be played by cloning the cached <audio> element and calling play() on the
+  // clone. A clone is a brand-new media element with nothing buffered, so the browser had to
+  // set up a decoder and pull the file again at the exact instant of the tap — which is the
+  // "minor but noticeable" hitch when the treasure box opens, since that tap fires the 2.8s
+  // magical chime on the same frame as the wobble, the sprite swap and a confetti burst.
+  // A pre-decoded AudioBuffer costs nothing to start: no element, no fetch, no decode, no GC
+  // churn from a discarded clone. This is the same trick — and the same reasoning — the
+  // storybook shell already uses for its two page-flip sounds (see initSfx in script.js).
+  // The element path is kept verbatim as the fallback: no Web Audio, a codec the context
+  // cannot decode, or file:// where fetch is refused all land back on it.
+  var sfxBuf = {};                   // src -> decoded AudioBuffer
+  var sfxDecoding = {};              // src -> true while a decode is in flight
+  function primeSFX(src) {
+    if (!ok(src) || sfxBuf[src] || sfxDecoding[src]) return;
+    var c = uiCtx(); if (!c) return;
+    sfxDecoding[src] = true;
+    fetch(src)
+      .then(function (r) { return r.ok ? r.arrayBuffer() : Promise.reject(r.status); })
+      .then(function (a) { return c.decodeAudioData(a); })
+      .then(function (buf) { sfxBuf[src] = buf; sfxDecoding[src] = false; })
+      .catch(function () { sfxDecoding[src] = false; });   // stays unset -> element fallback
+  }
   function playSFX(src) {
     if (muted || !ok(src)) return;
     var t = performance.now();
     if (lastSfx[src] && t - lastSfx[src] < 120) return; // debounce rapid identical presses
     lastSfx[src] = t;
     lastSfxSrc = src; sfxPlays++;
+    var c = uiCtx();
+    if (c && sfxBuf[src]) {
+      try {
+        if (c.state === "suspended") c.resume();
+        var s = c.createBufferSource();
+        s.buffer = sfxBuf[src];
+        var g = c.createGain();
+        g.gain.value = VOL.sfx;        // audible, but never over the voice
+        s.connect(g); g.connect(c.destination);
+        s.start(0);
+        return;
+      } catch (e) { /* fall through to the element */ }
+    }
+    primeSFX(src);                     // not decoded yet — warm it so the next one is instant
     var base = elementFor(src);
     var inst;
     try { inst = base.cloneNode(); } catch (e) { inst = base; }
     inst.loop = false;
-    setVol(inst, VOL.sfx);             // audible, but never over the voice
+    setVol(inst, VOL.sfx);
     safePlay(inst);
   }
 
@@ -357,7 +394,7 @@ var AudioManager = (function () {
     prepareNarration: prepareNarration,
     playBGM: playBGM, stopBGM: stopBGM, setBGMVolume: setBGMVolume, duckBGM: duckBGM, levels: function () { return Object.assign({}, VOL); },
     startNarration: startNarration, stopNarration: stopNarration, narrationActive: narrationActive,
-    playSFX: playSFX, playUI: playUI, setUIVolume: setUIVolume,
+    playSFX: playSFX, primeSFX: primeSFX, playUI: playUI, setUIVolume: setUIVolume,
     stopAll: stopAll, setMuted: setMuted, stats: stats
   };
 })();

@@ -710,22 +710,66 @@
     position: absolute; left: 42%; top: 74%; transform: translate(-50%, -50%);
     z-index: 2;                                 /* above the full-bleed artwork */
     width: clamp(84px, 10vw, 116px); height: clamp(84px, 10vw, 116px);  /* same size as before */
-    border: none; padding: 0; cursor: pointer; border-radius: 50%; overflow: hidden;
+    border: none; padding: 0; cursor: pointer; border-radius: 50%;
+    background-color: transparent;
     display: inline-flex; align-items: center; justify-content: center;
-    /* the supplied artwork — the source PNG has an opaque gray background, so we
-       zoom/pan to the round button and the circular clip (border-radius + overflow)
-       hides the gray corners. */
+    /* THE ARTWORK, SIZED TO ITSELF.
+       This used to zoom to 164% "because the source PNG has an opaque gray background".
+       That is not true of this file: assets/play button.webp is a VP8X WebP with an alpha
+       channel and 63% transparent pixels. So the zoom was hiding nothing and cost everything —
+       measured, the gold button occupies 165px of the 240px frame (69%), and at 164% the outer
+       39% of the image falls outside the element. That is precisely the gold RING, which is why
+       the button rendered as a pale white circle with a triangle in it.
+       145% is the honest number: it scales the 165px of artwork to exactly the element's width,
+       so the ring meets the edge — which is what the old comment was trying to do. */
     background-image: url("assets/play%20button.webp");
     background-repeat: no-repeat;
-    background-size: 164% auto;   /* zoom so the gold ring meets the circle edge — hides the source's pale glow */
+    background-size: 145% auto;
     background-position: center;
-    box-shadow: 0 16px 26px -8px rgba(120,80,10,0.5), 0 6px 12px rgba(90,55,10,0.4);
-    transition: transform 120ms ease, box-shadow 150ms ease, filter 120ms ease;
+    /* The warm glow is now STATIC. It used to be animated inside playBreathe, i.e. a fresh
+       drop-shadow blur pass on every frame, forever, for as long as the cover was on screen —
+       the one animated filter in the whole project and the reason the button felt sticky. A
+       constant filter is rasterised once and then merely transformed by the compositor, so the
+       breathing below is free. */
+    filter: drop-shadow(0 0 14px rgba(246, 184, 30, 0.6));
+    transition: transform 120ms ease;
     animation: playBreathe 2.4s ease-in-out infinite;   /* poppy breathing */
     -webkit-tap-highlight-color: transparent;
   }
-  .play-btn:active { filter: brightness(0.96); transform: translate(-50%, -50%) scale(0.95); }
+  .play-btn:active {
+    filter: drop-shadow(0 0 14px rgba(246, 184, 30, 0.6)) brightness(0.96);
+    transform: translate(-50%, -50%) scale(0.95);
+  }
   .play-btn:focus-visible { outline: none; }
+
+  /* ---- THE MAGICAL RIM (matches the game's final-screen button) --------------
+     Three strokes on one circle: a faint continuous ring that breathes, and two bright arcs
+     travelling round it, held exactly half a lap apart by a negative animation delay. One arc
+     reads as a glitch when it passes; two read as an orbit.
+     r=47 in a 100-unit box, so the circumference is 2π·47 ≈ 295 — which is where the dash
+     numbers below come from. Change r and they change with it. */
+  .play-rim {
+    position: absolute; inset: -8%;
+    width: 116%; height: 116%;
+    overflow: visible; pointer-events: none;
+  }
+  .play-rim circle { fill: none; stroke-linecap: round; }
+  .play-rim-base {
+    stroke: rgba(255, 246, 205, 0.5); stroke-width: 2.2;
+    animation: playRimBreathe 2.2s ease-in-out infinite;
+  }
+  .play-rim-arc, .play-rim-arc2 {
+    stroke: #fffae0;
+    animation: playRimTravel 2.9s linear infinite;
+  }
+  .play-rim-arc  { stroke-width: 3.4; stroke-dasharray: 44 251; }
+  .play-rim-arc2 { stroke-width: 2.2; stroke-dasharray: 22 273; stroke: rgba(255,255,240,0.85);
+                   animation-delay: -1.45s; }   /* half of 2.9s → half a lap apart */
+  @keyframes playRimTravel { to { stroke-dashoffset: -295; } }
+  @keyframes playRimBreathe {
+    0%, 100% { stroke: rgba(255, 246, 205, 0.40); stroke-width: 2.0; }
+    50%      { stroke: rgba(255, 255, 238, 0.95); stroke-width: 3.0; }
+  }
 
   /* ---- LOADING BAR ---------------------------------------------------------
      Takes the play button's exact spot on the cover while assets download, so
@@ -778,11 +822,14 @@
     70%  { opacity: 1; transform: translate(-50%, -50%) scale(1.12); }
     100% { opacity: 1; transform: translate(-50%, -50%) scale(1);    }
   }
-  /* BREATHING — the button gently grows + glows (warm gold, matching the artwork),
-     then settles, like a calm breath. transform keeps the centre-of-cover placement. */
+  /* BREATHING — the button gently grows, then settles, like a calm breath.
+     TRANSFORM ONLY. The glow it used to animate alongside this is now a constant filter on
+     .play-btn: a transform is handed to the compositor, whereas a changing drop-shadow forces a
+     blur pass every single frame. Same motion, none of the cost.
+     translate(-50%,-50%) is repeated in every keyframe because it IS the button's placement. */
   @keyframes playBreathe {
-    0%, 100% { transform: translate(-50%, -50%) scale(1);     filter: drop-shadow(0 0 6px  rgba(246,184,30,0.5)); }
-    50%      { transform: translate(-50%, -50%) scale(1.09);  filter: drop-shadow(0 0 22px rgba(246,184,30,0.9)); }
+    0%, 100% { transform: translate(-50%, -50%) scale(1);    }
+    50%      { transform: translate(-50%, -50%) scale(1.09); }
   }
 
   /* ==========================================================================
@@ -1044,6 +1091,9 @@
   @media (prefers-reduced-motion: reduce) {
     .book-float { animation: none; } .scene { animation: none; }
     .play-btn, .play-btn.pop-in { animation: none; }
+    /* the rim keeps its ring so the button is still clearly outlined — just still */
+    .play-rim-arc, .play-rim-arc2 { animation: none; opacity: 0; }
+    .play-rim-base { animation: none; stroke: rgba(255, 246, 205, 0.75); }
     .loader-fill { transition: none; }
     .book.open .cover { animation-duration: 420ms; }
     .book.open .cover .front .curl, body.is-open .cover-cast { animation-duration: 420ms; }
