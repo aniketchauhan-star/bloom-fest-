@@ -787,10 +787,16 @@
      button now settles at its resting size and stays there, so nothing is animating on the cover
      while the reader decides to tap. translate(-50%,-50%) is repeated in every keyframe because
      it IS the button's placement, not part of the effect. */
-  .play-btn.pop-in { animation: playPopIn 520ms cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+  /* Shortened from 520ms, and it no longer starts from a third of the button's size. The pop is
+     cosmetic, but while it runs the button is DRAWN smaller than it is, so a long entrance from a
+     tiny scale is dead time in which the button looks unready. It is opaque within ~70ms now and
+     settled by 300, and the tap test measures the resting size anyway (see tapHitsPlay), so a tap
+     lands even mid-pop. */
+  .play-btn.pop-in { animation: playPopIn 300ms cubic-bezier(0.34, 1.56, 0.64, 1) both; }
   @keyframes playPopIn {
-    0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.35); }
-    70%  { opacity: 1; transform: translate(-50%, -50%) scale(1.12); }
+    0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.72); }
+    25%  { opacity: 1; transform: translate(-50%, -50%) scale(0.95); }
+    70%  { opacity: 1; transform: translate(-50%, -50%) scale(1.06); }
     100% { opacity: 1; transform: translate(-50%, -50%) scale(1);    }
   }
 
