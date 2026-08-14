@@ -733,7 +733,10 @@
        breathing below is free. */
     filter: drop-shadow(0 0 14px rgba(246, 184, 30, 0.6));
     transition: transform 120ms ease;
-    animation: playBreathe 2.4s ease-in-out infinite;   /* poppy breathing */
+    /* NO LOOPING ANIMATION. Nothing on this button runs after its entrance: the cover is where the
+       reader is already waiting, so the button stays perfectly still and every frame the browser
+       spends here goes to the video and audio still being fetched behind it. The press feedback
+       below is a transition, so it costs nothing until the button is actually touched. */
     -webkit-tap-highlight-color: transparent;
   }
   .play-btn:active {
@@ -741,35 +744,6 @@
     transform: translate(-50%, -50%) scale(0.95);
   }
   .play-btn:focus-visible { outline: none; }
-
-  /* ---- THE MAGICAL RIM (matches the game's final-screen button) --------------
-     Three strokes on one circle: a faint continuous ring that breathes, and two bright arcs
-     travelling round it, held exactly half a lap apart by a negative animation delay. One arc
-     reads as a glitch when it passes; two read as an orbit.
-     r=47 in a 100-unit box, so the circumference is 2π·47 ≈ 295 — which is where the dash
-     numbers below come from. Change r and they change with it. */
-  .play-rim {
-    position: absolute; inset: -8%;
-    width: 116%; height: 116%;
-    overflow: visible; pointer-events: none;
-  }
-  .play-rim circle { fill: none; stroke-linecap: round; }
-  .play-rim-base {
-    stroke: rgba(255, 246, 205, 0.5); stroke-width: 2.2;
-    animation: playRimBreathe 2.2s ease-in-out infinite;
-  }
-  .play-rim-arc, .play-rim-arc2 {
-    stroke: #fffae0;
-    animation: playRimTravel 2.9s linear infinite;
-  }
-  .play-rim-arc  { stroke-width: 3.4; stroke-dasharray: 44 251; }
-  .play-rim-arc2 { stroke-width: 2.2; stroke-dasharray: 22 273; stroke: rgba(255,255,240,0.85);
-                   animation-delay: -1.45s; }   /* half of 2.9s → half a lap apart */
-  @keyframes playRimTravel { to { stroke-dashoffset: -295; } }
-  @keyframes playRimBreathe {
-    0%, 100% { stroke: rgba(255, 246, 205, 0.40); stroke-width: 2.0; }
-    50%      { stroke: rgba(255, 255, 238, 0.95); stroke-width: 3.0; }
-  }
 
   /* ---- LOADING BAR ---------------------------------------------------------
      Takes the play button's exact spot on the cover while assets download, so
@@ -815,21 +789,15 @@
 
   /* PLAY's entrance once loading finishes — a springy pop, then it hands over to
      the usual breathing animation. */
-  .play-btn.pop-in { animation: playPopIn 520ms cubic-bezier(0.34, 1.56, 0.64, 1) both,
-                                playBreathe 2.4s ease-in-out 520ms infinite; }
+  /* ONE pop, then stillness. This used to chain an infinite breathe on after the entrance; the
+     button now settles at its resting size and stays there, so nothing is animating on the cover
+     while the reader decides to tap. translate(-50%,-50%) is repeated in every keyframe because
+     it IS the button's placement, not part of the effect. */
+  .play-btn.pop-in { animation: playPopIn 520ms cubic-bezier(0.34, 1.56, 0.64, 1) both; }
   @keyframes playPopIn {
     0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.35); }
     70%  { opacity: 1; transform: translate(-50%, -50%) scale(1.12); }
     100% { opacity: 1; transform: translate(-50%, -50%) scale(1);    }
-  }
-  /* BREATHING — the button gently grows, then settles, like a calm breath.
-     TRANSFORM ONLY. The glow it used to animate alongside this is now a constant filter on
-     .play-btn: a transform is handed to the compositor, whereas a changing drop-shadow forces a
-     blur pass every single frame. Same motion, none of the cost.
-     translate(-50%,-50%) is repeated in every keyframe because it IS the button's placement. */
-  @keyframes playBreathe {
-    0%, 100% { transform: translate(-50%, -50%) scale(1);    }
-    50%      { transform: translate(-50%, -50%) scale(1.09); }
   }
 
   /* ==========================================================================
@@ -1091,9 +1059,6 @@
   @media (prefers-reduced-motion: reduce) {
     .book-float { animation: none; } .scene { animation: none; }
     .play-btn, .play-btn.pop-in { animation: none; }
-    /* the rim keeps its ring so the button is still clearly outlined — just still */
-    .play-rim-arc, .play-rim-arc2 { animation: none; opacity: 0; }
-    .play-rim-base { animation: none; stroke: rgba(255, 246, 205, 0.75); }
     .loader-fill { transition: none; }
     .book.open .cover { animation-duration: 420ms; }
     .book.open .cover .front .curl, body.is-open .cover-cast { animation-duration: 420ms; }
