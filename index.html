@@ -99,18 +99,11 @@
                 <div class="cover-img"></div>
                 <div class="back-fill"></div>
                 <div class="curl"></div>
-                <button class="play-btn" id="hint" type="button" aria-label="Play — open the book">
-                  <!-- The travelling border light, same idea as the game's final-screen button:
-                       a faint continuous ring that breathes, plus two bright arcs chasing each
-                       other round it half a lap apart. Authored here rather than in CSS because
-                       an SVG stroke is the only honest way to run a line around a circle's edge,
-                       and it scales with the button on every screen size. -->
-                  <svg class="play-rim" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
-                    <circle class="play-rim-base" cx="50" cy="50" r="47" />
-                    <circle class="play-rim-arc"  cx="50" cy="50" r="47" />
-                    <circle class="play-rim-arc2" cx="50" cy="50" r="47" />
-                  </svg>
-                </button>
+                <!-- Deliberately EMPTY, and with no looping animation of any kind (see .play-btn in
+                     styles.css). The cover is the one screen where the reader is waiting, so the
+                     button is kept as cheap as a button can be: one static image, one static glow,
+                     a single entrance pop, and nothing running afterwards. -->
+                <button class="play-btn" id="hint" type="button" aria-label="Play — open the book"></button>
                 <!-- Loading bar: sits exactly where PLAY does, and holds that spot
                      until every byte has landed. body.is-loading hides .play-btn and
                      shows this; the preloader in script.js swaps them at 100% and the
