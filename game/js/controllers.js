@@ -582,6 +582,13 @@ var Controllers = (function () {
       // The Part-2 naming line needs its TRUE length too — both name scrolls are cued from it (see
       // part2Cues) — so its metadata must already be known when that part starts, not fetched then.
       if (featherLantern) Audio.prepareNarration(featherLantern);
+      // Decode this level's one-shots into memory NOW, while nothing is happening. Each of these
+      // fires on the same frame as a visual change — the chime lands with the box opening, the
+      // error clip with the wrong-drop reminder — and a clip that still has to be fetched and
+      // decoded at that moment is a dropped frame exactly where it is most visible.
+      [boxOpenSFX, wrongSFX, dropSFX].forEach(function (s) {
+        if (s && Audio.primeSFX) { try { Audio.primeSFX(s); } catch (e) {} }
+      });
       // Warm every sprite this level's items can show (item + dropped, Part 3 + Part 4) as soon as the
       // level mounts. Each reveal awaits its own warm too; doing it here means those awaits are usually
       // already satisfied, and the natural sizes the seating maths needs are known before the first drop.
