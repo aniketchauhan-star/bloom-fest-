@@ -726,23 +726,17 @@
     background-repeat: no-repeat;
     background-size: 145% auto;
     background-position: center;
-    /* The warm glow is now STATIC. It used to be animated inside playBreathe, i.e. a fresh
-       drop-shadow blur pass on every frame, forever, for as long as the cover was on screen —
-       the one animated filter in the whole project and the reason the button felt sticky. A
-       constant filter is rasterised once and then merely transformed by the compositor, so the
-       breathing below is free. */
-    filter: drop-shadow(0 0 14px rgba(246, 184, 30, 0.6));
-    transition: transform 120ms ease;
-    /* NO LOOPING ANIMATION. Nothing on this button runs after its entrance: the cover is where the
-       reader is already waiting, so the button stays perfectly still and every frame the browser
-       spends here goes to the video and audio still being fetched behind it. The press feedback
-       below is a transition, so it costs nothing until the button is actually touched. */
+    /* The original soft contact shadow, exactly as authored — no glow, no ring, nothing added.
+       The button is the artwork and nothing else. */
+    box-shadow: 0 16px 26px -8px rgba(120,80,10,0.5), 0 6px 12px rgba(90,55,10,0.4);
+    transition: transform 120ms ease, box-shadow 150ms ease, filter 120ms ease;
+    /* NO LOOPING ANIMATION, and no filter at rest. The cover is where the reader is already
+       waiting, so the button stays perfectly still and every frame the browser spends here goes
+       to the video and audio still being fetched behind it. The press feedback below is a
+       transition, so it costs nothing until the button is actually touched. */
     -webkit-tap-highlight-color: transparent;
   }
-  .play-btn:active {
-    filter: drop-shadow(0 0 14px rgba(246, 184, 30, 0.6)) brightness(0.96);
-    transform: translate(-50%, -50%) scale(0.95);
-  }
+  .play-btn:active { filter: brightness(0.96); transform: translate(-50%, -50%) scale(0.95); }
   .play-btn:focus-visible { outline: none; }
 
   /* ---- LOADING BAR ---------------------------------------------------------
