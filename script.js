@@ -601,16 +601,58 @@ function positionLbdStage() {
   lbdStage.style.height = r.height + "px";
 }
 let lbdAnimTimer = null;
+const LBD_MORPH_MS = 400;   // keep in sync with .lbd-stage.lbd-anim in styles.css
+
+/* ---- Expand to / shrink from full screen ---------------------------------
+   THE BOX IS NEVER ANIMATED — only a transform is.
+
+   This used to transition left/top/width/height from the page rectangle to the viewport. Those
+   are LAYOUT properties and this box holds an IFRAME, so each frame of the morph handed the game
+   a brand-new viewport: it re-fitted its 1920x1080 stage ~24 times in 400ms, on the main thread,
+   always a frame behind the border the compositor had already moved. The picture chased its own
+   frame rather than travelling with it — the reported downward slide and edge flicker, worst on a
+   tablet because that is where the page-rect (16:9) and the viewport differ most in shape.
+
+   So the geometry now JUMPS to its final value in one step (one resize, one re-fit) and the
+   overlay is carried from where it was to where it is going on a transform, which the compositor
+   animates without laying anything out and without the iframe noticing at all. Same FIRST / INVERT
+   / PLAY shape as smoothRescale() above, for the same reason. */
 function setLbdFullscreen(on) {
   if (!lbdStage) return;
+  const from = lbdStage.getBoundingClientRect();   // FIRST: where the overlay is right now
   lbdFullscreen = on;
-  positionLbdStage();                        // make the inline page-rect geometry current
-  lbdStage.classList.add("lbd-anim");        // turn the box-morph transition ON for this toggle
-  void lbdStage.offsetWidth;                 // commit, so the class change below animates from here
-  lbdStage.classList.toggle("fullscreen", on);   // expand to / shrink from full screen
-  document.body.classList.toggle("lbd-fullscreen", on);
+
+  // ---- final geometry, in ONE step (no transition on the box, ever) ----
   clearTimeout(lbdAnimTimer);
-  lbdAnimTimer = setTimeout(function () { lbdStage.classList.remove("lbd-anim"); }, 460);
+  lbdStage.classList.remove("lbd-anim");
+  lbdStage.style.transform = "";                   // measure the target undistorted
+  positionLbdStage();                              // the inline page rect .fullscreen overrides
+  lbdStage.classList.toggle("fullscreen", on);
+  document.body.classList.toggle("lbd-fullscreen", on);
+  const to = lbdStage.getBoundingClientRect();
+
+  // ---- INVERT: park it back over its old footprint ----
+  // The scale is UNIFORM, never scaleX/scaleY. The game letterboxes its own 16:9 stage inside
+  // whatever box it is given, so matching the WIDTH lands the picture exactly where it already
+  // was; a non-uniform scale would match the box but visibly stretch the game while it moved.
+  if (from.width > 0 && from.height > 0 && to.width > 0 && to.height > 0) {
+    const k  = from.width / to.width;
+    const tx = (from.left + from.width  / 2) - (to.left + to.width  / 2);
+    const ty = (from.top  + from.height / 2) - (to.top  + to.height / 2);
+    lbdStage.style.transform = "translate(" + tx + "px," + ty + "px) scale(" + k + ")";
+    void lbdStage.getBoundingClientRect();         // flush as the transition's starting style
+    requestAnimationFrame(function () {            // PLAY: glide the correction away
+      lbdStage.classList.add("lbd-anim");
+      lbdStage.style.transform = "";
+    });
+  }
+  // Leave nothing behind: a lingering transform would keep this a containing block for any
+  // fixed-position descendant and hold the compositing layer open.
+  lbdAnimTimer = setTimeout(function () {
+    lbdStage.classList.remove("lbd-anim");
+    lbdStage.style.transform = "";
+  }, LBD_MORPH_MS + 120);
+
   if (on) hideFlipHint();                    // the book's nudges have no business over a game
   updateProgress();                          // book chrome follows the overlay
 }

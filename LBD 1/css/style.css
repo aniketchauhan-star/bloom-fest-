@@ -130,21 +130,44 @@ html, body {
   pointer-events: none;
 }
 .rb-magic-rim rect { fill: none; stroke-linecap: round; }
-.rb-rim-base {                             /* the border line itself, always present */
+/* The border line itself, always present — and BREATHING, so the outline is never a dead line
+ * between comet passes. Stroke colour + width are both animated: the edge swells and brightens
+ * like something enchanted, then settles. */
+.rb-rim-base {
   stroke: rgba(255, 246, 205, 0.55);
   stroke-width: 2;
+  animation: rb-rim-breathe 2.2s ease-in-out infinite;
 }
-.rb-rim-arc {                              /* the light that runs around it */
+/* The light that runs around it. TWO of them: the second is the same animation pulled back half a
+ * period (negative delay = starts mid-cycle, no wait on load), so the pair sit on opposite sides
+ * of the pill and chase each other forever. A shorter, thinner second arc keeps it magical rather
+ * than busy — one comet reads as a glitch when it passes, two read as an orbit. */
+.rb-rim-arc, .rb-rim-arc2 {
   stroke: #fffae0;
-  stroke-width: 3;
-  stroke-dasharray: 100 600;               /* one 100-long arc, 600 of gap = 700 perimeter */
-  filter: drop-shadow(0 0 4px rgba(255, 224, 130, 0.95));
   animation: rb-rim-travel 2.9s linear infinite;
 }
+.rb-rim-arc {
+  stroke-width: 3;
+  stroke-dasharray: 110 590;               /* one 110-long arc, 590 of gap = 700 perimeter */
+  filter: drop-shadow(0 0 5px rgba(255, 224, 130, 0.95));
+}
+.rb-rim-arc2 {
+  stroke-width: 2;
+  stroke-dasharray: 55 645;                /* a shorter, fainter trailing spark */
+  stroke: rgba(255, 255, 240, 0.85);
+  filter: drop-shadow(0 0 6px rgba(255, 206, 92, 0.9));
+  animation-delay: -1.45s;                 /* exactly half of 2.9s -> half a lap apart */
+}
 @keyframes rb-rim-travel { to { stroke-dashoffset: -700; } }
+@keyframes rb-rim-breathe {
+  0%, 100% { stroke: rgba(255, 246, 205, 0.42); stroke-width: 2; }
+  50%      { stroke: rgba(255, 255, 238, 0.95); stroke-width: 2.7; }
+}
 @media (prefers-reduced-motion: reduce) {
-  /* no travelling light — the border line stays, so the button is still clearly outlined */
-  .rb-rim-arc { animation: none; opacity: 0; }
+  /* no travelling light and no breathing — the border line stays, so the button is still
+     clearly outlined, just still. */
+  .rb-rim-arc, .rb-rim-arc2 { animation: none; opacity: 0; }
+  .rb-rim-base { animation: none; stroke: rgba(255, 246, 205, 0.75); }
 }
 
 /* ---- interactive cursors: a hand on EVERYTHING you can interact with -----------------------

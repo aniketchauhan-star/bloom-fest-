@@ -92,6 +92,16 @@ var Controllers = (function () {
   // delay than this (the Tutorial's 12s Next hint, Level 1's 12s Part-4 ghost) it is capped at the
   // call sites, so no hand anywhere can now take more than 3s to appear.
   var IDLE_HINT_DELAY = 3;
+  // The Next-button hand was armed as a SINGLE timer whose callback returned silently when the
+  // button was not interactable at that exact instant — and nothing re-armed it, so one unlucky
+  // moment (a reparent/relayout still settling, a level root toggled mid-tick) cost the child the
+  // hint for the whole screen. That is the "no hand ever appears, however long I wait" report, and
+  // it is worst on the FINAL screen, where the button is re-hosted onto the level root a frame
+  // before the timer is armed and there is no later hint to recover with. So it retries instead of
+  // giving up, and only stops asking once the button genuinely never becomes reachable.
+  var HINT_RETRY_MS = 500;      // re-check a button that is not ready yet this often
+  var HINT_GIVE_UP_MS = 30000;  // …but do not re-check forever
+  var NEXT_HINT_BOB = 14;       // logical px the hand rises/falls — the motion IS the "press me"
   var GHOST_FADE = 0.45;   // how long the drag-guide hand takes to fade up (it must never just blink on)
   // How long a Part-2 name scroll takes to unfurl. It is also the LONGEST a cued unfurl may take:
   // the name text only appears when the unfurl completes (see openScroll), so this doubles as the
@@ -600,6 +610,14 @@ var Controllers = (function () {
       basketDef = ID.basket ? E.getAnchoredPos(ID.basket) : { x: 0, y: 0 };
       trolleyDef = ID.trolley ? E.getAnchoredPos(ID.trolley) : { x: 0, y: 0 };
       A(ID.basket, false); A(ID.trolley, false);
+      // Re-arm the box for a clean re-entry. openBox() switches every leaf's input off and shades
+      // them, and nothing ever switched them back — so replaying a level landed on a box that could
+      // not be tapped at all, still wearing its press shade. (Forward-only play never hit this; a God
+      // Mode screen jump does, and self.start already restores the draggables for the same reason.)
+      boxTapTargets().forEach(function (id) {
+        E.setInputEnabled(id, true);
+        var r = E.get(id); if (r) r.el.classList.remove("pressed");
+      });
       if (ID.nextP2) reg(E.onClick(ID.nextP2, guard("nextP3", startPart3), { key: "gm" }));
       if (ID.nextP3) reg(E.onClick(ID.nextP3, guard("nextP4", startPart4), { key: "gm" }));
       part1Flow();
@@ -614,16 +632,55 @@ var Controllers = (function () {
       return function () { if (locks[name]) return; locks[name] = true; fn(); };
     }
 
+    /* ---- THE WHOLE BOX IS THE BUTTON -----------------------------------------------------------
+       What the child sees as "the box" is TWO sibling nodes: the front box (the authored Button —
+       boxImage, or boxInteractiveVisual on a level that supplies one) and the LID (boxTop), which is
+       a LATER sibling and therefore painted ON TOP of the front box's upper half.
+
+       The lid carries a Unity Button of its own, but its only authored call is an animator "Play",
+       which the flow wiring ignores — so no handler is ever attached to it. engine.js nonetheless
+       gives ANY node with a Button component pointer-events:auto (see build(), and the note there
+       that names "the box lids" as exactly this case). The lid was therefore hit-testable and inert:
+       a tap on the top face of the box landed on the lid and died there, because the real handler
+       sits on a SIBLING — not an ancestor — so the click had nothing to bubble up to.
+
+       Measured off the layout, the lid covers the top ~280 of the front box's ~650 logical px, and on
+       the Tutorial / Level 2 / Level 4 it also stands 8–22px proud of it. That is the reported defect
+       exactly: the upper ~45% of the box was dead and only the lower part opened it.
+
+       So every leaf is wired to the one handler and the hit area is the UNION of their rects. Both
+       leaves are authored preserveAspect:false — the sprite is stretched to fill the node — so that
+       union is precisely the visible box, with no dead space around it. Data-driven, so it holds for
+       all five levels and for any level authored later. */
+    function boxTapTargets() {
+      var out = [], seen = {};
+      [ID.boxButton, ID.boxInteractiveVisual, ID.boxImage, ID.boxTop].forEach(function (id) {
+        if (id && !seen[id] && E.get(id)) { seen[id] = 1; out.push(id); }
+      });
+      return out;
+    }
+
     async function part1Flow() {
       await typeText(INSTR[1], AUD[1]);
       await S.wait(1);
       // The box becomes tappable as soon as the instruction lands — only the HINT waits. (These two used
       // to be one step, which is why the box hand still appeared right away after the Tutorial: the 8s
       // idle rule had only been applied to the drag hand and the answer hand, not to this one.)
-      // press: "legacy" — the box is authored artwork, not a UI button, and it already has its own
-      // tap animation (the rigid box+lid wobble in openBox). It also must not dim on tap (QA §4/§7),
-      // so it keeps exactly the original brief shade and none of the game-button drop-and-squash.
-      if (ID.boxButton) reg(E.onClick(ID.boxButton, guard("box", openBox), { key: "gm", press: "legacy" }));
+      // press: false — the box is authored artwork, not a UI button, so it gets none of the game-button
+      // drop-and-squash, and it must not dim on tap (QA §4/§7). The brief shade the "legacy" press used
+      // to paint is applied by openBox() instead, across BOTH leaves at once: now that either leaf can
+      // be the one under the finger, shading only the tapped one would read as the lid coming away from
+      // the body. The tap SOUND is unchanged — engine.js plays it on this path too.
+      boxTapTargets().forEach(function (id, i) {
+        // The front box keeps the button semantics. The lid is the SAME control, so it must not also
+        // become a second tab stop, or a second thing for a screen reader to announce.
+        if (i > 0) {
+          var el = E.get(id).el;
+          el.setAttribute("tabindex", "-1");
+          el.setAttribute("aria-hidden", "true");
+        }
+        reg(E.onClick(id, guard("box", openBox), { key: "gm", press: false }));
+      });
       boxHintTimer = S.setTimeout(showHint, (isFirstLevel ? 0 : IDLE_HINT_DELAY) * 1000);
     }
     function showHint() {
@@ -639,8 +696,9 @@ var Controllers = (function () {
     function openBox() {
       if (boxOpened) return; boxOpened = true;
       // disable further taps WITHOUT the grayscale/opacity dim (setInteractable fades it) — the box must
-      // stay fully opaque as it wobbles + opens.
-      if (ID.boxButton) E.setInputEnabled(ID.boxButton, false);
+      // stay fully opaque as it wobbles + opens. EVERY leaf, not just the one that was tapped: the lid
+      // is a tap target too now, and a live lid over an opening box is a second way in.
+      boxTapTargets().forEach(function (id) { E.setInputEnabled(id, false); });
       A(ID.messageBar, false);
       if (boxHintTimer) { S.clearTimeout(boxHintTimer); boxHintTimer = null; }   // tapped in time: no hand
       if (ID.hintHand) { E.kill(ID.hintHand); A(ID.hintHand, false); }
@@ -652,6 +710,15 @@ var Controllers = (function () {
       // also holds the back box, glow highlight and hidden items — animating it shook the whole scene).
       var bodyId = ID.boxInteractiveVisual || ID.boxImage;
       var shakeIds = [bodyId, ID.boxTop].filter(function (id) { return id && E.get(id); });
+      // ONE object, ONE press. Both leaves take the shade together, whichever of them the finger
+      // actually landed on — the box is rigid, which is the same reason the wobble below rocks them
+      // about a single shared pivot. A lid that darkened on its own would read as coming off the body.
+      // (This is the shade engine.js used to paint for press:"legacy", moved here so it covers the
+      // whole box; the 120ms is unchanged.)
+      shakeIds.forEach(function (id) { E.get(id).el.classList.add("pressed"); });
+      S.setTimeout(function () {
+        shakeIds.forEach(function (id) { var r = E.get(id); if (r) r.el.classList.remove("pressed"); });
+      }, 120);
       if (shakeIds.length) {
         var pc = E.centerLogical(bodyId);                        // shared pivot = front-box centre
         var rest = shakeIds.map(function (id) {
@@ -1384,7 +1451,10 @@ var Controllers = (function () {
           var svg = document.createElementNS(NS, "svg");
           svg.setAttribute("class", "rb-magic-rim");
           svg.setAttribute("viewBox", "0 0 " + FINAL_NEXT.w + " " + FINAL_NEXT.h);
-          ["rb-rim-base", "rb-rim-arc"].forEach(function (cls) {
+          // THREE strokes on one outline: a continuous gold border that breathes, and TWO bright
+          // arcs chasing each other round it half a lap apart, so the light never leaves the edge
+          // and the button always reads as "alive" rather than as a picture with a line round it.
+          ["rb-rim-base", "rb-rim-arc", "rb-rim-arc2"].forEach(function (cls) {
             var rect = document.createElementNS(NS, "rect");
             rect.setAttribute("class", cls);
             rect.setAttribute("x", "1.5"); rect.setAttribute("y", "1.5");
@@ -1503,25 +1573,44 @@ var Controllers = (function () {
       // The button reads as tappable from the moment it appears; the HAND is still the idle hint
       // that waits out IDLE_HINT_DELAY. Two different jobs: "this is pressable" vs "you seem stuck".
       if (btnId) { makeTappable(btnId, S); nextHintBtn = btnId; }
-      nextHintTimer = S.setTimeout(function () {
-        // isInteractableInTree, NOT isActive: the hint hand (n519_hand) is a CANVAS-ROOT node shared
-        // by every level, so it shows regardless of which level is on screen. isActive only checks the
-        // button itself — a button whose level root was deactivated without disposing the GM (e.g. a
-        // God Mode screen jump) still reads active, and this timer would park a hand over another level.
-        if (!btnId || !E.isInteractableInTree(btnId) || !ID.nextHint) return;
-        A(ID.nextHint, true); S.track(ID.nextHint);
-        // scale FIRST, then place: placeTapHand measures the hand at its rendered size, and the
-        // fingertip/clamp maths is meaningless against an unscaled 400x400 box.
-        E.setScale(ID.nextHint, 0.7);
-        placeTapHand(ID.nextHint, btnId);
-        E.setAlpha(ID.nextHint, 0); E.doFade(ID.nextHint, 1, GHOST_FADE, "OutQuad", { onComplete: function () {
-          E.doFade(ID.nextHint, 0.55, 0.8, "InOutSine", { loops: -1, yoyo: true });   // then breathe, gently
-        } });
-        // The hand QA reported: on a completion screen the child has already done the work and is
-        // only waiting to be told how to go on, so a long pause reads as the game having stopped.
-        // The Tutorial's authored 12s is capped to the same 3s ceiling — the teaching level used to
-        // make the child wait the LONGEST of all for this hand.
-      }, (isFirstLevel ? Math.min(nextHintDelay, IDLE_HINT_DELAY) : IDLE_HINT_DELAY) * 1000);
+      var waited = 0;
+      var armHand = function (delay) {
+        nextHintTimer = S.setTimeout(function () {
+          nextHintTimer = null;
+          if (!btnId || !ID.nextHint) return;              // nothing to point at — never will be
+          // isInteractableInTree, NOT isActive: the hint hand (n519_hand) is a CANVAS-ROOT node shared
+          // by every level, so it shows regardless of which level is on screen. isActive only checks the
+          // button itself — a button whose level root was deactivated without disposing the GM (e.g. a
+          // God Mode screen jump) still reads active, and this timer would park a hand over another level.
+          // NOT READY IS NOT THE SAME AS NEVER: this used to `return` here and the hint was gone for
+          // good. Look again shortly instead, and only stop once the button has had every chance.
+          if (!E.isInteractableInTree(btnId)) {
+            waited += HINT_RETRY_MS;
+            if (waited < HINT_GIVE_UP_MS) armHand(HINT_RETRY_MS);
+            return;
+          }
+          A(ID.nextHint, true); S.track(ID.nextHint);
+          E.setAsLastSibling(ID.nextHint);                 // never let a later screen paint over it
+          // scale FIRST, then place: placeTapHand measures the hand at its rendered size, and the
+          // fingertip/clamp maths is meaningless against an unscaled 400x400 box.
+          E.setScale(ID.nextHint, 0.7);
+          placeTapHand(ID.nextHint, btnId);
+          E.setAlpha(ID.nextHint, 0); E.doFade(ID.nextHint, 1, GHOST_FADE, "OutQuad", { onComplete: function () {
+            if (S.cancelled()) return;
+            E.doFade(ID.nextHint, 0.55, 0.8, "InOutSine", { loops: -1, yoyo: true });   // then breathe, gently
+          } });
+          // …and TAP. A hand that only changes opacity reads as a cursor someone left behind — which
+          // is exactly how a small pale hand on a bright button gets missed. The same rise-and-fall
+          // the box hand already uses (showHint) says "press this" without a word of text.
+          var hp = E.getAnchoredPos(ID.nextHint);
+          E.doAnchorPosY(ID.nextHint, hp.y - NEXT_HINT_BOB, 0.55, "InOutSine", { loops: -1, yoyo: true });
+        }, delay);
+      };
+      // The hand QA reported: on a completion screen the child has already done the work and is
+      // only waiting to be told how to go on, so a long pause reads as the game having stopped.
+      // The Tutorial's authored 12s is capped to the same 3s ceiling — the teaching level used to
+      // make the child wait the LONGEST of all for this hand.
+      armHand((isFirstLevel ? Math.min(nextHintDelay, IDLE_HINT_DELAY) : IDLE_HINT_DELAY) * 1000);
       if (btnId) reg(E.onClick(btnId, stopNextButtonHint, { key: "nexthint" }));
     }
     function stopNextButtonHint() {

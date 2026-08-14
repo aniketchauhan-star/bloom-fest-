@@ -962,12 +962,19 @@
   /* Enable the box-morph transition ONLY while expanding to / shrinking from full
      screen — so simply LANDING on the page shows the game at page size instead of
      making it grow out of the top-left corner. JS adds .lbd-anim for the toggle. */
+  /* ⚠ TRANSFORM ONLY — never left/top/width/height.
+     This box holds an IFRAME, and those four are LAYOUT properties. Animating them changed the
+     GAME'S OWN VIEWPORT on every frame of the morph, so the game re-fitted its 1920x1080 stage
+     ~24 times in 400ms — on the main thread, a frame behind the border the compositor had already
+     moved. The canvas therefore chased its own frame instead of travelling with it, which reads as
+     the game sliding down and flickering at the edges before snapping back and expanding. Worst on
+     a tablet, where the aspect change from page-rect to viewport is largest.
+     A transform is composited and changes no layout at all: the iframe's box is set once, the game
+     re-fits once, and the overlay and everything inside it move as a single piece. */
   .lbd-stage.lbd-anim {
-    transition: left 0.4s cubic-bezier(0.4,0,0.2,1),
-                top 0.4s cubic-bezier(0.4,0,0.2,1),
-                width 0.4s cubic-bezier(0.4,0,0.2,1),
-                height 0.4s cubic-bezier(0.4,0,0.2,1),
+    transition: transform 0.4s cubic-bezier(0.4,0,0.2,1),
                 border-radius 0.4s ease, opacity 0.3s ease;
+    will-change: transform;
   }
   /* Full screen: fill the viewport and rise above the arrows / progress chip. */
   .lbd-stage.fullscreen {
