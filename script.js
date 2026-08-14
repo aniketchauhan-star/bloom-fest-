@@ -411,7 +411,9 @@ function preloadFinish() {
   assetsReady = true;
   preloadState.shown = 100;
   preloadPaint();
-  // let the bar visibly reach 100 before the swap, so it never looks truncated
+  // A short beat so the bar is SEEN to reach 100 rather than vanishing at 98 — but no longer
+  // than that. This was 260ms, which on top of the entrance animation put more than half a
+  // second between "loaded" and "ready to tap"; the bar still reads as complete at 120.
   setTimeout(function () {
     document.body.classList.remove("is-loading");
     if (hint) {
@@ -424,7 +426,7 @@ function preloadFinish() {
     warmLbdInBackground();
     // Someone hit PLAY / Enter while we were still loading — honour it now.
     if (startPending) { startPending = false; openBook(); }
-  }, 260);
+  }, 120);
 }
 
 (function runPreloader() {
@@ -1489,6 +1491,7 @@ function runOpenSequence() {
   // A user gesture drives every open, so start audio here.
   soundOn();
   resumeAudio();
+  playTap();                            // the PRESS — lands immediately, before the cover moves
   playCoverFlip();
   playBgMusic();                        // start the looping background music
   primeVideo(0); primeVideo(1);         // unlock page 1 + 2 inside the gesture
@@ -1619,7 +1622,16 @@ const tapCatcher = document.getElementById("tapCatcher");
 function tapHitsPlay(e) {
   const r = hint.getBoundingClientRect();
   const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-  const rad = Math.max(r.width, r.height) / 2;
+  /* ---- THE RESTING RADIUS, NEVER THE ANIMATED ONE -------------------------
+     getBoundingClientRect() reports the TRANSFORMED box, and this button is transformed twice:
+     it enters with a pop that starts at a fraction of its size, and it shrinks under :active. So
+     a tap during the entrance was measured against a button drawn far smaller than it really is,
+     landed outside this radius, and did nothing at all — the reader taps PLAY, nothing happens,
+     and they tap again. offsetWidth/offsetHeight are LAYOUT values and ignore transforms
+     entirely, so the hit area is the button's true size from the first frame it exists.
+     The centre is still taken from the live rect: the pop scales about the centre, so that point
+     is stable throughout, and it stays correct if the cover is ever re-laid-out. */
+  const rad = Math.max(hint.offsetWidth, hint.offsetHeight, r.width, r.height) / 2;
   return Math.hypot(e.clientX - cx, e.clientY - cy) <= rad;
 }
 if (tapCatcher) tapCatcher.addEventListener("click", function (e) { if (!opened && tapHitsPlay(e)) openBook(); });
@@ -2137,6 +2149,53 @@ function playFlip() {
   try {                                     // fallback
     flipSound.currentTime = 0; flipSound.playbackRate = 1.5;
     const p = flipSound.play(); if (p && p.catch) p.catch(function () {});
+  } catch (_) {}
+}
+/* ---- PLAY's own press sound ----------------------------------------------
+   The cover had NO press sound at all: tapping PLAY went straight into the cover-flip whoosh,
+   which does not begin until the cover actually starts moving — so the tap itself was silent and
+   the button read as unresponsive for that beat.
+   This is deliberately the SAME click the game plays on every one of its buttons (see
+   UI_SOUNDS.tap in game/js/audio-manager.js): a short band-passed noise burst for the "plastic"
+   snap, plus a falling triangle underneath to give it weight. Synthesised rather than shipped as
+   a file — no bytes, no request, no decode, nothing to preload — and it keeps the book and the
+   game sounding like one product rather than two.
+   Noise is generated from a FIXED seed so every tap is bit-identical; a press that sounds subtly
+   different each time reads as a glitch. */
+let _tapNoiseBuf = null;
+function tapNoise(c) {
+  if (_tapNoiseBuf) return _tapNoiseBuf;
+  const n = Math.floor(c.sampleRate * 0.12);
+  _tapNoiseBuf = c.createBuffer(1, n, c.sampleRate);
+  const d = _tapNoiseBuf.getChannelData(0);
+  let seed = 20260814;
+  for (let i = 0; i < n; i++) { seed = (seed * 1103515245 + 12345) & 0x7fffffff; d[i] = (seed / 0x40000000) - 1; }
+  return _tapNoiseBuf;
+}
+function playTap() {
+  if (muted || !audioCtx) return;
+  try {
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    const t = audioCtx.currentTime;
+    // the CLICK — noise through a narrow band, instant attack
+    const ns = audioCtx.createBufferSource(); ns.buffer = tapNoise(audioCtx);
+    const bp = audioCtx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 2400; bp.Q.value = 1.1;
+    const ng = audioCtx.createGain();
+    ng.gain.setValueAtTime(0.0001, t);
+    ng.gain.exponentialRampToValueAtTime(0.5, t + 0.001);
+    ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.036);
+    ns.connect(bp).connect(ng).connect(audioCtx.destination);
+    ns.start(t); ns.stop(t + 0.06);
+    // the BODY — a short falling triangle, so the click has weight instead of being a tick
+    const o = audioCtx.createOscillator(); o.type = "triangle";
+    o.frequency.setValueAtTime(900, t);
+    o.frequency.exponentialRampToValueAtTime(620, t + 0.072);
+    const og = audioCtx.createGain();
+    og.gain.setValueAtTime(0.0001, t);
+    og.gain.exponentialRampToValueAtTime(0.28, t + 0.002);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.072);
+    o.connect(og).connect(audioCtx.destination);
+    o.start(t); o.stop(t + 0.09);
   } catch (_) {}
 }
 // COVER-page flip sound — played ONLY when the cover opens (never on page flips).
